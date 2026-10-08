@@ -56,6 +56,7 @@
     border-radius: 14px; padding: 14px 16px;
     backdrop-filter: blur(8px);
     font-size: 12px; width: 190px;
+    max-height: calc(100vh - 36px); overflow-y: auto;
   }
   .panel label { display: flex; flex-direction: column; gap: 5px; color: #8fbbe6; }
   .panel label.chk {
@@ -107,6 +108,9 @@
   <label>缩放 <span class="val" id="vZoom"></span>
     <input type="range" id="sZoom" min="0" max="1000" step="1" value="812"></label>
 
+  <div class="divider"><span>边界</span></div>
+  <label class="chk"><input type="checkbox" id="cbWrap"> 循环边界（环绕）</label>
+
   <div class="divider"><span>放大镜（中键）</span></div>
   <label>放大倍数 <span class="val" id="vMag"></span>
     <input type="range" id="sMag" min="1.5" max="8" step="0.1" value="3"></label>
@@ -143,7 +147,8 @@ const params = {
   mouseField: true,
   zoom: 1,
   magZoom: 3,
-  magRadius: 96
+  magRadius: 96,
+  wrap: false
 };
 
 const PERCEPTION = 60;
@@ -257,11 +262,32 @@ const CELL_SIZE = PERCEPTION;
 function update(dt) {
   const total = fishes.length;
   const N = dt * REF_TICKS;   // 以 60 tick/s 为基准的步长倍率（dt = 1/60 时 N = 1）
+  const wrap = params.wrap;
+  const wW = bounds.right - bounds.left;
+  const wH = bounds.bottom - bounds.top;
+  const halfW = wW * 0.5, halfH = wH * 0.5;
+
+  // 网格：循环模式下把格子规整到 [0,cols)×[0,rows)，邻格按模取
+  let cols = 0, rows = 0, cw = CELL_SIZE, ch = CELL_SIZE;
+  if (wrap) {
+    cols = Math.max(3, Math.floor(wW / CELL_SIZE));
+    rows = Math.max(3, Math.floor(wH / CELL_SIZE));
+    cw = wW / cols; ch = wH / rows;
+  }
 
   for (const bucket of neighborGrid.values()) bucket.length = 0;
   for (let i = 0; i < total; i++) {
     const f = fishes[i];
-    const gx = Math.floor(f.x / CELL_SIZE), gy = Math.floor(f.y / CELL_SIZE);
+    let gx, gy;
+    if (wrap) {
+      gx = Math.floor((f.x - bounds.left) / cw);
+      gy = Math.floor((f.y - bounds.top) / ch);
+      gx = ((gx % cols) + cols) % cols;
+      gy = ((gy % rows) + rows) % rows;
+    } else {
+      gx = Math.floor(f.x / CELL_SIZE);
+      gy = Math.floor(f.y / CELL_SIZE);
+    }
     f.gx = gx; f.gy = gy;
     const key = gx * 100000 + gy;
     let bucket = neighborGrid.get(key);
@@ -271,24 +297,37 @@ function update(dt) {
 
   for (let i = 0; i < total; i++) {
     const f = fishes[i];
-    let cx = 0, cy = 0, ax = 0, ay = 0, sx = 0, sy = 0;
+    let cdx = 0, cdy = 0, ax = 0, ay = 0, sdx = 0, sdy = 0;
     let n = 0, sn = 0;
 
     for (let ox = -1; ox <= 1; ox++) {
       for (let oy = -1; oy <= 1; oy++) {
-        const bucket = neighborGrid.get((f.gx + ox) * 100000 + (f.gy + oy));
+        let key;
+        if (wrap) {
+          const nx = ((f.gx + ox) % cols + cols) % cols;
+          const ny = ((f.gy + oy) % rows + rows) % rows;
+          key = nx * 100000 + ny;
+        } else {
+          key = (f.gx + ox) * 100000 + (f.gy + oy);
+        }
+        const bucket = neighborGrid.get(key);
         if (bucket === undefined) continue;
         for (let b = 0; b < bucket.length; b++) {
           const j = bucket[b];
           if (j === i) continue;
           const o = fishes[j];
-          const dx = o.x - f.x, dy = o.y - f.y;
+          let dx = o.x - f.x, dy = o.y - f.y;
+          if (wrap) {
+            // 最小镜像（跨边界 & 跨对角边界都靠这个修正）
+            if (dx > halfW) dx -= wW; else if (dx < -halfW) dx += wW;
+            if (dy > halfH) dy -= wH; else if (dy < -halfH) dy += wH;
+          }
           const d2 = dx * dx + dy * dy;
           if (d2 > 0 && d2 < PERCEPTION * PERCEPTION) {
-            cx += o.x; cy += o.y;
+            cdx += dx; cdy += dy;          // 用镜像偏移求质心偏移
             ax += o.vx; ay += o.vy;
             n++;
-            if (d2 < SEP_RADIUS * SEP_RADIUS) { sx -= dx; sy -= dy; sn++; }
+            if (d2 < SEP_RADIUS * SEP_RADIUS) { sdx -= dx; sdy -= dy; sn++; }
           }
         }
       }
@@ -296,19 +335,19 @@ function update(dt) {
 
     let accx = 0, accy = 0;
     if (n > 0) {
-      let tx = (cx / n) - f.x, ty = (cy / n) - f.y;
-      let td = Math.hypot(tx, ty) || 1;
+      const tx = cdx / n, ty = cdy / n;    // 指向邻居质心的平均偏移
+      const td = Math.hypot(tx, ty) || 1;
       accx += (tx / td) * params.cohesion * 0.32;
       accy += (ty / td) * params.cohesion * 0.32;
-      let avx = ax / n, avy = ay / n;
-      let ad = Math.hypot(avx, avy) || 1;
+      const avx = ax / n, avy = ay / n;
+      const ad = Math.hypot(avx, avy) || 1;
       accx += (avx / ad) * params.align * 0.10;
       accy += (avy / ad) * params.align * 0.10;
     }
     if (sn > 0) {
-      let sd = Math.hypot(sx, sy) || 1;
-      accx += (sx / sd) * params.separation * 0.35;
-      accy += (sy / sd) * params.separation * 0.35;
+      const sd = Math.hypot(sdx, sdy) || 1;
+      accx += (sdx / sd) * params.separation * 0.35;
+      accy += (sdy / sd) * params.separation * 0.35;
     }
 
     f.wander += (Math.random() - 0.5) * 0.5 * N;
@@ -316,7 +355,11 @@ function update(dt) {
     accy += Math.sin(f.wander) * 0.02;
 
     if (mouse.active && params.mouseField) {
-      const dx = mouse.x - f.x, dy = mouse.y - f.y;
+      let dx = mouse.x - f.x, dy = mouse.y - f.y;
+      if (wrap) {
+        if (dx > halfW) dx -= wW; else if (dx < -halfW) dx += wW;
+        if (dy > halfH) dy -= wH; else if (dy < -halfH) dy += wH;
+      }
       const d = Math.hypot(dx, dy) || 1;
       if (d < params.mRadius) {
         const pull = (1 - d / params.mRadius) * params.mAttract;
@@ -332,7 +375,11 @@ function update(dt) {
 
     // 按住左键：持续驱散（不受鼠标力场开关影响）
     if (mouse.leftDown) {
-      const dx = f.x - mouse.x, dy = f.y - mouse.y;
+      let dx = f.x - mouse.x, dy = f.y - mouse.y;
+      if (wrap) {
+        if (dx > halfW) dx -= wW; else if (dx < -halfW) dx += wW;
+        if (dy > halfH) dy -= wH; else if (dy < -halfH) dy += wH;
+      }
       const d = Math.hypot(dx, dy) || 1;
       const p = Math.max(0, 1 - d / SCATTER_RADIUS);
       accx += (dx / d) * p * SCATTER_FORCE;
@@ -343,7 +390,7 @@ function update(dt) {
     accy *= N;
     f.vx += accx;
     f.vy += accy;
-    f.edges(N);
+    if (!wrap) f.edges(N);   // 循环模式不做软边界推挤
 
     const sp = Math.hypot(f.vx, f.vy) || 1;
     const damp = Math.pow(0.94, N);
@@ -355,6 +402,12 @@ function update(dt) {
 
     f.x += f.vx * N;
     f.y += f.vy * N;
+
+    if (wrap) {
+      // 位置环绕
+      f.x = bounds.left + ((((f.x - bounds.left) % wW) + wW) % wW);
+      f.y = bounds.top + ((((f.y - bounds.top) % wH) + wH) % wH);
+    }
   }
 }
 
@@ -658,15 +711,61 @@ const timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2');
 let gpuQuery = null, gpuPending = null, gpuMs = 0;
 
 /* ---------------- 渲染 ---------------- */
-function uploadInstances() {
+let instCapacity = MAX_FISH;
+let instCount = 0;
+function ensureInst(n) {
+  if (n <= instCapacity) return;
+  instCapacity = Math.max(n, instCapacity * 2);
+  instData = new Float32Array(instCapacity * 6);
+  gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, instCapacity * 6 * 4, gl.DYNAMIC_DRAW);
+}
+
+function buildInstances() {
   const n = fishes.length;
-  if (instData.length < n * 6) instData = new Float32Array(n * 6);
-  for (let i = 0; i < n; i++) {
-    const f = fishes[i], o = i * 6;
-    instData[o] = f.x; instData[o + 1] = f.y;
-    instData[o + 2] = Math.atan2(f.vy, f.vx);
-    instData[o + 3] = f.size; instData[o + 4] = f.hue; instData[o + 5] = f.phase;
+  const wrap = params.wrap;
+  const wW = bounds.right - bounds.left;
+  const wH = bounds.bottom - bounds.top;
+
+  // 循环模式下，靠近边界的鱼需要在对面补画副本，接口才无缝
+  let cap = n;
+  if (wrap) {
+    cap = 0;
+    for (let i = 0; i < n; i++) {
+      const f = fishes[i], e = f.size * 2;
+      let kx = 1, ky = 1;
+      if (f.x - e < bounds.left || f.x + e > bounds.right) kx++;
+      if (f.y - e < bounds.top || f.y + e > bounds.bottom) ky++;
+      cap += kx * ky;
+    }
   }
+  ensureInst(cap);
+
+  const d = instData;
+  let m = 0;
+  for (let i = 0; i < n; i++) {
+    const f = fishes[i];
+    const ang = Math.atan2(f.vy, f.vx);
+    if (!wrap) {
+      d[m] = f.x; d[m + 1] = f.y; d[m + 2] = ang;
+      d[m + 3] = f.size; d[m + 4] = f.hue; d[m + 5] = f.phase; m += 6;
+      continue;
+    }
+    const e = f.size * 2;
+    let sx = 0, hasSx = false;
+    if (f.x - e < bounds.left) { sx = 1; hasSx = true; }
+    else if (f.x + e > bounds.right) { sx = -1; hasSx = true; }
+    let sy = 0, hasSy = false;
+    if (f.y - e < bounds.top) { sy = 1; hasSy = true; }
+    else if (f.y + e > bounds.bottom) { sy = -1; hasSy = true; }
+
+    // 本体
+    d[m] = f.x; d[m + 1] = f.y; d[m + 2] = ang; d[m + 3] = f.size; d[m + 4] = f.hue; d[m + 5] = f.phase; m += 6;
+    if (hasSx) { d[m] = f.x + sx * wW; d[m + 1] = f.y; d[m + 2] = ang; d[m + 3] = f.size; d[m + 4] = f.hue; d[m + 5] = f.phase; m += 6; }
+    if (hasSy) { d[m] = f.x; d[m + 1] = f.y + sy * wH; d[m + 2] = ang; d[m + 3] = f.size; d[m + 4] = f.hue; d[m + 5] = f.phase; m += 6; }
+    if (hasSx && hasSy) { d[m] = f.x + sx * wW; d[m + 1] = f.y + sy * wH; d[m + 2] = ang; d[m + 3] = f.size; d[m + 4] = f.hue; d[m + 5] = f.phase; m += 6; }
+  }
+  instCount = m / 6;
 }
 function updateSnow() {
   for (let i = 0; i < snow.length; i++) {
@@ -689,13 +788,13 @@ function drawFish(uMag, magCenterX, magCenterY, lensOn, lensCX, lensCY, lensR) {
   gl.uniform1f(fishU.u_lensR, lensR || 0);
   gl.bindVertexArray(fishVAO);
   gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
-  gl.bufferSubData(gl.ARRAY_BUFFER, 0, instData.subarray(0, fishes.length * 6));
-  gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, fishes.length);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, instData.subarray(0, instCount * 6));
+  gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, instCount);
 }
 
 function render() {
   const s = dpr;
-  uploadInstances();
+  buildInstances();
   updateSnow();
 
   /* ---- 场景 → FBO（累积拖尾）---- */
@@ -860,6 +959,10 @@ bind('sMagR', 'vMagR', 'magRadius', v => Math.round(v) + 'px');
 const cbMouse = document.getElementById('cbMouse');
 cbMouse.addEventListener('change', () => { params.mouseField = cbMouse.checked; });
 params.mouseField = cbMouse.checked;
+
+const cbWrap = document.getElementById('cbWrap');
+cbWrap.addEventListener('change', () => { params.wrap = cbWrap.checked; });
+params.wrap = cbWrap.checked;
 
 /* 数量：指数均匀，slider 0..1000 → 30..5000 */
 const COUNT_MIN = 30, COUNT_MAX = 50000, COUNT_RATIO = COUNT_MAX / COUNT_MIN;
