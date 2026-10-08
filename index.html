@@ -49,6 +49,9 @@
   }
   body.paused #pause { opacity: 1; transform: translate(-50%, -50%) scale(1); }
   .panel, .hud, .title, .diag { transition: opacity .2s ease; }
+  body.ui-min .panel,
+  body.ui-min .hud,
+  body.ui-min #pause { opacity: 0; pointer-events: none; }
   body.ui-hidden .panel,
   body.ui-hidden .hud,
   body.ui-hidden .title,
@@ -132,7 +135,7 @@
 
 <div class="hud">
   <div>移动鼠标 → 蓝色力场吸引鱼群，内圈橙色排斥</div>
-  <div><b>中键</b> 放大镜 · <b>左键</b> 按住驱散 · <b>空格</b> 暂停 · <b>R</b> 重置 · <b>W/S</b> 倍速 · <b>F1</b> 隐藏界面</div>
+  <div><b>中键</b> 放大镜 · <b>左键</b> 按住驱散 · <b>空格</b> 暂停 · <b>R</b> 重置 · <b>W/S</b> 倍速 · <b>F1</b> 界面</div>
 </div>
 
 <div class="panel paint">
@@ -236,6 +239,7 @@ function screenToWorld(sx, sy) {
 const mag = { active: false };
 const paint = { enabled: false, hue: 20, radius: 80 };  // 画笔：色相 + 半径
 let paused = false;
+let uiMode = 0;   // 0 全显示 / 1 只留左上性能 / 2 全隐藏
 const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 3, 5, 8, 16];
 let speedIdx = 3;                 // 指向 1.0×
 let speedMul = SPEEDS[speedIdx];  // 倍速：只缩放传进 tick 的 dt
@@ -263,8 +267,10 @@ window.addEventListener('mouseup', e => {
 });
 window.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
 window.addEventListener('keydown', e => {
-  if (e.code === 'F1') {                 // F1：隐藏 / 展开界面
-    document.body.classList.toggle('ui-hidden');
+  if (e.code === 'F1') {                 // F1：全显示 → 只留左上性能 → 全隐藏 循环
+    uiMode = (uiMode + 1) % 3;
+    document.body.classList.toggle('ui-min', uiMode === 1);
+    document.body.classList.toggle('ui-hidden', uiMode === 2);
     e.preventDefault();
     return;
   }
