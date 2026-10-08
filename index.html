@@ -102,7 +102,7 @@
     <input type="range" id="sSpeed" min="0.4" max="3" step="0.05" value="1.4"></label>
 
   <div class="divider"><span>鼠标力场</span></div>
-  <label class="chk"><input type="checkbox" id="cbMouse" checked> 启用鼠标力场</label>
+  <label class="chk"><input type="checkbox" id="cbMouse"> 启用鼠标力场</label>
   <label>吸引力 <span class="val" id="vMAttract"></span>
     <input type="range" id="sMAttract" min="0" max="2" step="0.01" value="0.5"></label>
   <label>排斥力 <span class="val" id="vMRepel"></span>
@@ -115,7 +115,7 @@
     <input type="range" id="sZoom" min="0" max="1000" step="1" value="812"></label>
 
   <div class="divider"><span>边界</span></div>
-  <label class="chk"><input type="checkbox" id="cbWrap"> 循环边界（环绕）</label>
+  <label class="chk"><input type="checkbox" id="cbWrap" checked> 循环边界（环绕）</label>
 
   <div class="divider"><span>放大镜（中键）</span></div>
   <label>放大倍数 <span class="val" id="vMag"></span>
@@ -158,11 +158,11 @@ const params = {
   mAttract: 0.5,
   mRepel: 0.8,
   mRadius: 320,
-  mouseField: true,
+  mouseField: false,
   zoom: 1,
   magZoom: 3,
   magRadius: 96,
-  wrap: false
+  wrap: true
 };
 
 const PERCEPTION = 60;
