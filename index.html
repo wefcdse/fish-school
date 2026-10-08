@@ -48,6 +48,12 @@
     transition: opacity .2s ease, transform .2s ease;
   }
   body.paused #pause { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  .panel, .hud, .title, .diag { transition: opacity .2s ease; }
+  body.ui-hidden .panel,
+  body.ui-hidden .hud,
+  body.ui-hidden .title,
+  body.ui-hidden .diag,
+  body.ui-hidden #pause { opacity: 0; pointer-events: none; }
   .panel {
     position: fixed; right: 20px; top: 18px;
     display: flex; flex-direction: column; gap: 10px;
@@ -126,7 +132,7 @@
 
 <div class="hud">
   <div>移动鼠标 → 蓝色力场吸引鱼群，内圈橙色排斥</div>
-  <div><b>中键</b> 放大镜 · <b>左键</b> 按住驱散 · <b>空格</b> 暂停 · <b>R</b> 重置 · <b>W/S</b> 倍速</div>
+  <div><b>中键</b> 放大镜 · <b>左键</b> 按住驱散 · <b>空格</b> 暂停 · <b>R</b> 重置 · <b>W/S</b> 倍速 · <b>F1</b> 隐藏界面</div>
 </div>
 
 <div class="panel paint">
@@ -257,6 +263,11 @@ window.addEventListener('mouseup', e => {
 });
 window.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
 window.addEventListener('keydown', e => {
+  if (e.code === 'F1') {                 // F1：隐藏 / 展开界面
+    document.body.classList.toggle('ui-hidden');
+    e.preventDefault();
+    return;
+  }
   if (e.target && e.target.tagName === 'INPUT') return;   // 焦点在 UI 控件上时不触发画布快捷键
   if (e.code === 'Space') {
     paused = !paused;
