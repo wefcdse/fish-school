@@ -236,12 +236,14 @@ let speedMul = SPEEDS[speedIdx];  // 倍速：只缩放传进 tick 的 dt
 let simTime = 0;                  // 逻辑(模拟)时间累积（秒）
 
 window.addEventListener('mousemove', e => {
+  if (e.target !== canvas) { mouse.active = false; return; }   // 落在 UI 上的移动不驱动画布
   mouse.sx = e.clientX; mouse.sy = e.clientY;
   const w = screenToWorld(e.clientX, e.clientY);
   mouse.x = w.x; mouse.y = w.y; mouse.active = true;
 });
 window.addEventListener('mouseleave', () => { mouse.active = false; mouse.leftDown = false; mag.active = false; });
 window.addEventListener('mousedown', e => {
+  if (e.target !== canvas) return;   // 落在 UI 上的按下不驱动画布
   if (e.button === 0) {
     mouse.leftDown = true; mouse.sx = e.clientX; mouse.sy = e.clientY; mouse.active = true;
   } else if (e.button === 1) {
@@ -249,11 +251,13 @@ window.addEventListener('mousedown', e => {
   }
 });
 window.addEventListener('mouseup', e => {
+  // 释放始终处理，避免在画布外松手后按住状态卡住
   if (e.button === 0) mouse.leftDown = false;
   else if (e.button === 1) mag.active = false;
 });
 window.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
 window.addEventListener('keydown', e => {
+  if (e.target && e.target.tagName === 'INPUT') return;   // 焦点在 UI 控件上时不触发画布快捷键
   if (e.code === 'Space') {
     paused = !paused;
     document.body.classList.toggle('paused', paused);
