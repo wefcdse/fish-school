@@ -588,6 +588,27 @@ impl Sim {
                 accy += dy / d * pp * scatter_f;
             }
 
+            // 场景驱散点：范围内线性排斥
+            unsafe {
+                let sn = SCATTER_N as usize;
+                let scat = &*std::ptr::addr_of!(SCATTER);
+                for f in 0..sn {
+                    let sx = scat[f * 4]; let sy = scat[f * 4 + 1];
+                    let sr = scat[f * 4 + 2]; let ss = scat[f * 4 + 3];
+                    if sr <= 0.0 { continue; }
+                    let mut sdx = fx - sx; let mut sdy = fy - sy;
+                    if wrap {
+                        if sdx > hw { sdx -= ww; } else if sdx < -hw { sdx += ww; }
+                        if sdy > hh { sdy -= wh; } else if sdy < -hh { sdy += wh; }
+                    }
+                    let sd = (sdx * sdx + sdy * sdy).sqrt().max(1e-6);
+                    if sd < sr {
+                        let pp = (1.0 - sd / sr) * ss;
+                        accx += sdx / sd * pp; accy += sdy / sd * pp;
+                    }
+                }
+            }
+
             self.accx[i] = accx;
             self.accy[i] = accy;
         }
@@ -746,6 +767,27 @@ impl Sim {
                 accx += dx / d * pp * scatter_f;
                 accy += dy / d * pp * scatter_f;
             }
+            // 场景驱散点：范围内线性排斥
+            unsafe {
+                let sn = SCATTER_N as usize;
+                let scat = &*std::ptr::addr_of!(SCATTER);
+                for f in 0..sn {
+                    let sx = scat[f * 4]; let sy = scat[f * 4 + 1];
+                    let sr = scat[f * 4 + 2]; let ss = scat[f * 4 + 3];
+                    if sr <= 0.0 { continue; }
+                    let mut sdx = fx - sx; let mut sdy = fy - sy;
+                    if wrap {
+                        if sdx > hw { sdx -= ww; } else if sdx < -hw { sdx += ww; }
+                        if sdy > hh { sdy -= wh; } else if sdy < -hh { sdy += wh; }
+                    }
+                    let sd = (sdx * sdx + sdy * sdy).sqrt().max(1e-6);
+                    if sd < sr {
+                        let pp = (1.0 - sd / sr) * ss;
+                        accx += sdx / sd * pp; accy += sdy / sd * pp;
+                    }
+                }
+            }
+
             self.accx[i] = accx;
             self.accy[i] = accy;
         }
@@ -924,6 +966,9 @@ impl Sim {
 /* ---------------- 全局状态 & C ABI ---------------- */
 static mut SIM_PTR: *mut Sim = std::ptr::null_mut();
 static mut PARAMS: [f32; PARAM_LEN] = [0.0; PARAM_LEN];
+const MAX_SITES: usize = 64;
+static mut SCATTER: [f32; MAX_SITES * 4] = [0.0; MAX_SITES * 4];  // 每点 x,y,radius,strength
+static mut SCATTER_N: i32 = 0;
 
 #[inline]
 fn sim() -> &'static mut Sim {
@@ -977,6 +1022,12 @@ pub extern "C" fn sim_rescale(cx: f32, cy: f32, ratio: f32) { sim().rescale(cx, 
 
 #[no_mangle]
 pub extern "C" fn sim_params_ptr() -> *mut f32 { unsafe { std::ptr::addr_of_mut!(PARAMS) as *mut f32 } }
+#[no_mangle]
+pub extern "C" fn sim_scatter_ptr() -> *mut f32 { unsafe { std::ptr::addr_of_mut!(SCATTER) as *mut f32 } }
+#[no_mangle]
+pub extern "C" fn sim_scatter_cap() -> i32 { MAX_SITES as i32 }
+#[no_mangle]
+pub extern "C" fn sim_set_scatter_count(n: i32) { unsafe { SCATTER_N = n.clamp(0, MAX_SITES as i32); } }
 
 #[no_mangle]
 pub extern "C" fn sim_x_ptr() -> *const f32 { sim().x.as_ptr() }

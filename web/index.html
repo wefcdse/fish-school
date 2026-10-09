@@ -75,7 +75,7 @@
   .panel label.chk input { accent-color: #4da3ff; width: 14px; height: 14px; cursor: pointer; }
   .panel input[type=range] { width: 100%; accent-color: #4da3ff; cursor: pointer; height: 3px; }
   .panel .val { float: right; color: #cfe6ff; }
-  .panel .row { display: flex; justify-content: space-between; color: #8fbbe6; }
+  .panel .row { display: flex; justify-content: space-between; color: #8fbbe6; cursor: move; }
   .panel .divider {
     display: flex; align-items: center; gap: 8px;
     margin-top: 2px; font-size: 10px; letter-spacing: 2px; color: #6d9cc8;
@@ -89,6 +89,20 @@
     border: 1px solid rgba(90,160,240,.3); border-radius: 6px;
     background: transparent;
   }
+  .panel.sites { right: auto; left: 230px; top: 150px; }
+  .panel.p-flock { right: 20px; top: 18px; }
+  .panel.p-scatter { right: 20px; top: 400px; }
+  .panel.p-mouse { right: 230px; top: 18px; }
+  .panel.p-view { right: 230px; top: 270px; }
+  #siteEdit { display: flex; flex-direction: column; gap: 10px; }
+  .panel .btn {
+    width: 100%; padding: 6px 8px; cursor: pointer;
+    font: inherit; font-size: 12px; color: #cfe6ff;
+    background: rgba(40,90,150,.35); border: 1px solid rgba(120,190,255,.3);
+    border-radius: 8px;
+  }
+  .panel .btn:hover { background: rgba(60,120,190,.45); }
+  .panel .btn.active { background: rgba(70,150,110,.55); border-color: rgba(140,240,180,.55); color: #eafff4; }
 </style>
 </head>
 <body>
@@ -98,8 +112,9 @@
 <div class="diag" id="diag"></div>
 <div id="pause">已暂停</div>
 
-<div class="panel">
-  <div class="row"><span>鱼群数量</span><span class="val" id="vCount">180</span></div>
+<div class="panel p-flock">
+  <div class="row"><span>鱼群</span></div>
+  <div class="row"><span>数量</span><span class="val" id="vCount">180</span></div>
   <input type="range" id="sCount" min="0" max="1000" step="1" value="242">
   <label>凝聚力 <span class="val" id="vCohesion"></span>
     <input type="range" id="sCohesion" min="0" max="2" step="0.01" value="0.55"></label>
@@ -111,8 +126,10 @@
     <input type="range" id="sSpeed" min="0.4" max="8" step="0.05" value="1.4"></label>
   <label>扰动 <span class="val" id="vWander"></span>
     <input type="range" id="sWander" min="0" max="5" step="0.05" value="1"></label>
+</div>
 
-  <div class="divider"><span>鼠标力场</span></div>
+<div class="panel p-mouse">
+  <div class="row"><span>鼠标力场</span></div>
   <label class="chk"><input type="checkbox" id="cbMouse"> 启用鼠标力场</label>
   <label>吸引力 <span class="val" id="vMAttract"></span>
     <input type="range" id="sMAttract" min="0" max="2" step="0.01" value="0.5"></label>
@@ -120,20 +137,22 @@
     <input type="range" id="sMRepel" min="0" max="3" step="0.01" value="0.8"></label>
   <label>影响半径 <span class="val" id="vMRadius"></span>
     <input type="range" id="sMRadius" min="80" max="600" step="1" value="320"></label>
+</div>
 
-  <div class="divider"><span>驱散（按住左键）</span></div>
+<div class="panel p-scatter">
+  <div class="row"><span>驱散</span></div>
   <label>驱散强度 <span class="val" id="vScatter"></span>
     <input type="range" id="sScatter" min="0" max="4" step="0.05" value="1.5"></label>
   <label>驱散半径 <span class="val" id="vScatterR"></span>
     <input type="range" id="sScatterR" min="0" max="1000" step="1" value="406"></label>
+</div>
 
-  <div class="divider"><span>视图</span></div>
+<div class="panel p-view">
+  <div class="row"><span>视图</span></div>
   <label>缩放 <span class="val" id="vZoom"></span>
     <input type="range" id="sZoom" min="0" max="1000" step="1" value="812"></label>
-
   <div class="divider"><span>边界</span></div>
   <label class="chk"><input type="checkbox" id="cbWrap" checked> 循环边界（环绕）</label>
-
   <div class="divider"><span>放大镜（中键）</span></div>
   <label>放大倍数 <span class="val" id="vMag"></span>
     <input type="range" id="sMag" min="1.5" max="8" step="0.1" value="3"></label>
@@ -152,6 +171,28 @@
   <label>颜色 <input type="color" id="paintColor" value="#ff6a3c"></label>
   <label>画笔大小 <span class="val" id="vBrush"></span>
     <input type="range" id="sBrush" min="10" max="400" step="1" value="80"></label>
+  <div class="divider"><span>一键着色</span></div>
+  <button id="btnBlue" class="btn">纯蓝色</button>
+  <button id="btnRandDefault" class="btn">默认随机</button>
+  <button id="btnRandRich" class="btn">丰富随机</button>
+</div>
+
+<div class="panel sites">
+  <div class="row"><span>驱散点</span></div>
+  <label>新点半径 <span class="val" id="vDefR"></span>
+    <input type="range" id="sDefR" min="0" max="1000" step="1" value="406"></label>
+  <label>新点强度 <span class="val" id="vDefS"></span>
+    <input type="range" id="sDefS" min="0" max="4" step="0.05" value="1.5"></label>
+  <label class="chk"><input type="checkbox" id="cbShowAllR"> 显示所有半径</label>
+  <button id="btnAddSite" class="btn">＋ 添加驱散点</button>
+  <div id="siteEdit" style="display:none">
+    <div class="divider"><span>编辑选中点</span></div>
+    <label>半径 <span class="val" id="vSiteR"></span>
+      <input type="range" id="sSiteR" min="0" max="1000" step="1" value="406"></label>
+    <label>强度 <span class="val" id="vSiteS"></span>
+      <input type="range" id="sSiteS" min="0" max="4" step="0.05" value="1.5"></label>
+    <button id="btnDelSite" class="btn">删除此点</button>
+  </div>
 </div>
 
 <script>
@@ -247,6 +288,11 @@ function screenToWorld(sx, sy) {
 }
 const mag = { active: false };
 const paint = { enabled: false, hue: 20, radius: 80 };  // 画笔：色相 + 半径
+const scatterPts = [];     // 场景驱散点：{ x, y, r, s }（世界坐标）
+let selectedSite = -1;     // 当前选中的驱散点索引
+let dragSite = -1, dragOffX = 0, dragOffY = 0;   // 正在拖动的点
+let placeSite = false;     // 放置模式
+let showAllRadii = false;  // 是否显示所有点的半径圈
 let paused = false;
 let uiMode = 0;   // 0 全显示 / 1 只留左上性能 / 2 全隐藏
 const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 3, 5, 8, 16];
@@ -255,15 +301,83 @@ let speedMul = SPEEDS[speedIdx];  // 倍速：只缩放传进 tick 的 dt
 let simTime = 0;                  // 逻辑(模拟)时间累积（秒）
 
 window.addEventListener('mousemove', e => {
+  if (dragPanel) {                                       // 拖动面板（卡片）
+    dragPanel.el.style.left = (e.clientX - dragPanel.offX) + 'px';
+    dragPanel.el.style.top = (e.clientY - dragPanel.offY) + 'px';
+    return;
+  }
+  if (dragSite >= 0 && dragSite < scatterPts.length) {   // 拖动驱散点
+    const w = screenToWorld(e.clientX, e.clientY);
+    scatterPts[dragSite].x = w.x + dragOffX; scatterPts[dragSite].y = w.y + dragOffY;
+    return;
+  }
   if (e.target !== canvas) { mouse.active = false; return; }   // 落在 UI 上的移动不驱动画布
   mouse.sx = e.clientX; mouse.sy = e.clientY;
   const w = screenToWorld(e.clientX, e.clientY);
   mouse.x = w.x; mouse.y = w.y; mouse.active = true;
 });
-window.addEventListener('mouseleave', () => { mouse.active = false; mouse.leftDown = false; mag.active = false; });
+window.addEventListener('mouseleave', () => { mouse.active = false; mouse.leftDown = false; mag.active = false; dragSite = -1; });
+// —— 驱散点：放置 / 选中 / 编辑 ——
+function siteRadius() {
+  const t = parseFloat(document.getElementById('sSiteR').value) / 1000;
+  return SR_MIN * Math.pow(SR_RATIO, t);
+}
+function siteStrength() { return parseFloat(document.getElementById('sSiteS').value); }
+function defRadius() {
+  const t = parseFloat(document.getElementById('sDefR').value) / 1000;
+  return SR_MIN * Math.pow(SR_RATIO, t);
+}
+function defStrength() { return parseFloat(document.getElementById('sDefS').value); }
+function hitSite(sx, sy) {
+  const z = params.zoom;
+  for (let i = scatterPts.length - 1; i >= 0; i--) {
+    const p = scatterPts[i];
+    const px = W / 2 + (p.x - W / 2) * z, py = H / 2 + (p.y - H / 2) * z;
+    if (Math.hypot(sx - px, sy - py) <= 12) return i;   // 只认中心小圈
+  }
+  return -1;
+}
+function setPlaceMode(on) {
+  placeSite = on;
+  const b = document.getElementById('btnAddSite');
+  b.classList.toggle('active', on);
+  b.textContent = on ? '点击场景放置…' : '＋ 添加驱散点';
+  canvas.style.cursor = on ? 'crosshair' : '';
+}
+function syncSiteEditor() {
+  const ed = document.getElementById('siteEdit');
+  const sR = document.getElementById('sSiteR'), vR = document.getElementById('vSiteR');
+  const sS = document.getElementById('sSiteS'), vS = document.getElementById('vSiteS');
+  if (selectedSite >= 0 && selectedSite < scatterPts.length) {
+    const p = scatterPts[selectedSite];
+    ed.style.display = '';
+    sR.value = Math.round(1000 * Math.log(p.r / SR_MIN) / Math.log(SR_RATIO));
+    vR.textContent = Math.round(p.r);
+    sS.value = p.s;
+    vS.textContent = (+p.s).toFixed(2);
+  } else {
+    ed.style.display = 'none';
+  }
+}
 window.addEventListener('mousedown', e => {
   if (e.target !== canvas) return;   // 落在 UI 上的按下不驱动画布
   if (e.button === 0) {
+    if (placeSite) {                 // 放置模式：落点放一个驱散点
+      const w = screenToWorld(e.clientX, e.clientY);
+      scatterPts.push({ x: w.x, y: w.y, r: defRadius(), s: defStrength() });
+      selectedSite = scatterPts.length - 1;
+      setPlaceMode(false);
+      syncSiteEditor();
+      return;
+    }
+    const hit = hitSite(e.clientX, e.clientY);
+    if (hit >= 0) {                 // 点中驱散点：选中并开始拖动，不驱散/画笔
+      selectedSite = hit; syncSiteEditor();
+      const w = screenToWorld(e.clientX, e.clientY);
+      dragSite = hit; dragOffX = scatterPts[hit].x - w.x; dragOffY = scatterPts[hit].y - w.y;
+      return;
+    }
+    if (selectedSite >= 0) { selectedSite = -1; syncSiteEditor(); }
     mouse.leftDown = true; mouse.sx = e.clientX; mouse.sy = e.clientY; mouse.active = true;
   } else if (e.button === 1) {
     mag.active = true; mouse.sx = e.clientX; mouse.sy = e.clientY; e.preventDefault();
@@ -271,10 +385,26 @@ window.addEventListener('mousedown', e => {
 });
 window.addEventListener('mouseup', e => {
   // 释放始终处理，避免在画布外松手后按住状态卡住
-  if (e.button === 0) mouse.leftDown = false;
+  dragPanel = null;
+  if (e.button === 0) { mouse.leftDown = false; dragSite = -1; }
   else if (e.button === 1) mag.active = false;
 });
 window.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
+
+// 面板（卡片）可拖动：按住面板空白/标题行拖动，控件上不拖
+let dragPanel = null;
+document.querySelectorAll('.panel').forEach(panel => {
+  panel.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    if (e.target.closest('input, button, select, textarea, label, a')) return;   // 落在控件上不拖
+    e.preventDefault();
+    const r = panel.getBoundingClientRect();
+    dragPanel = { el: panel, offX: e.clientX - r.left, offY: e.clientY - r.top };
+    panel.style.right = 'auto';
+    panel.style.left = r.left + 'px';
+    panel.style.top = r.top + 'px';
+  });
+});
 window.addEventListener('keydown', e => {
   if (e.code === 'F1') {                 // F1：全显示 → 只留左上性能 → 全隐藏 循环
     uiMode = (uiMode + 1) % 3;
@@ -439,6 +569,19 @@ function update(dt) {
       accy += (dy / d) * p * params.scatterForce;
     }
 
+    // 场景驱散点：范围内线性排斥
+    for (let si = 0; si < scatterPts.length; si++) {
+      const sp = scatterPts[si];
+      if (sp.r <= 0) continue;
+      let dx = f.x - sp.x, dy = f.y - sp.y;
+      if (wrap) {
+        if (dx > halfW) dx -= wW; else if (dx < -halfW) dx += wW;
+        if (dy > halfH) dy -= wH; else if (dy < -halfH) dy += wH;
+      }
+      const d = Math.hypot(dx, dy) || 1;
+      if (d < sp.r) { const pp = (1 - d / sp.r) * sp.s; accx += (dx / d) * pp; accy += (dy / d) * pp; }
+    }
+
     accx *= N;
     accy *= N;
     f.vx += accx;
@@ -508,8 +651,9 @@ in vec2 v_uv;
 uniform vec2 u_resDev;
 uniform vec2 u_center;
 uniform float u_radius;
-uniform float u_isRing;
-out vec4 outColor;
+  uniform float u_isRing;
+  uniform vec3 u_ringColor;
+  out vec4 outColor;
 void main(){
   vec2 frag = v_uv * u_resDev;
   float d = distance(frag, u_center);
@@ -522,7 +666,7 @@ void main(){
   } else {
     if (d > u_radius + 1.5) discard;
     float a = smoothstep(u_radius - 3.0, u_radius, d);
-    outColor = vec4(0.63, 0.88, 1.0, a * 0.9);
+    outColor = vec4(u_ringColor, a * 0.9);
   }
 }`;
 
@@ -689,7 +833,7 @@ function U(p, names) { const o = { p }; for (const n of names) o[n] = gl.getUnif
 
 const fadeP = link(QUAD_VS, FADE_FS); const fadeU = U(fadeP, ['u_color']);
 const blitP = link(QUAD_VS, BLIT_FS); const blitU = U(blitP, ['u_tex']);
-const lensP = link(QUAD_VS, LENS_FS); const lensU = U(lensP, ['u_resDev', 'u_center', 'u_radius', 'u_isRing']);
+const lensP = link(QUAD_VS, LENS_FS); const lensU = U(lensP, ['u_resDev', 'u_center', 'u_radius', 'u_isRing', 'u_ringColor']);
 const fieldP = link(QUAD_VS, FIELD_FS); const fieldU = U(fieldP, ['u_resDev', 'u_center', 'u_radius', 'u_repelR', 'u_attract', 'u_repel']);
 const fishP = link(FISH_VS, FISH_FS); const fishU = U(fishP, ['u_res', 'u_center', 'u_zoom', 'u_magCenter', 'u_mag', 'u_lens', 'u_lensCenter', 'u_lensR']);
 const snowP = link(SNOW_VS, SNOW_FS); const snowU = U(snowP, ['u_res', 'u_dpr']);
@@ -933,6 +1077,7 @@ function render() {
     gl.uniform2f(lensU.u_center, cx, cyGL);
     gl.uniform1f(lensU.u_radius, R);
     gl.uniform1f(lensU.u_isRing, 1);
+    gl.uniform3f(lensU.u_ringColor, 0.63, 0.88, 1.0);
     gl.bindVertexArray(quadVAO);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
@@ -947,8 +1092,36 @@ function render() {
     gl.uniform2f(lensU.u_center, cx, cyGL);
     gl.uniform1f(lensU.u_radius, R);
     gl.uniform1f(lensU.u_isRing, 1);
+    gl.uniform3f(lensU.u_ringColor, 0.63, 0.88, 1.0);
     gl.bindVertexArray(quadVAO);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  /* ---- 驱散点 ---- */
+  if (scatterPts.length) {
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(lensP);
+    gl.uniform2f(lensU.u_resDev, canvas.width, canvas.height);
+    gl.uniform1f(lensU.u_isRing, 1);
+    gl.bindVertexArray(quadVAO);
+    for (let i = 0; i < scatterPts.length; i++) {
+      const p = scatterPts[i];
+      const wx = W / 2 + (p.x - W / 2) * params.zoom;
+      const wy = H / 2 + (p.y - H / 2) * params.zoom;
+      const sel = i === selectedSite;
+      gl.uniform2f(lensU.u_center, wx * s, canvas.height - wy * s);
+      // 中心小圈（始终显示）
+      gl.uniform1f(lensU.u_radius, 5 * s);
+      gl.uniform3f(lensU.u_ringColor, 1.0, sel ? 0.62 : 0.5, sel ? 0.28 : 0.16);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      // 选中时（或开启「显示所有半径」时）画影响半径圈
+      if (sel || showAllRadii) {
+        gl.uniform1f(lensU.u_radius, Math.max(p.r * params.zoom * s, 4));
+        gl.uniform3f(lensU.u_ringColor, 1.0, sel ? 0.62 : 0.42, sel ? 0.28 : 0.16);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
+    }
   }
   gl.bindVertexArray(null);
 }
@@ -1090,6 +1263,18 @@ function applyBrush() {
 sBrush.addEventListener('input', applyBrush);
 applyBrush();
 
+/* 一键给全部鱼重新着色（默认范围 185~240，丰富为全色域） */
+function recolorAll(kind) {
+  for (let i = 0; i < fishes.length; i++) {
+    if (kind === 'blue') fishes[i].hue = 220;
+    else if (kind === 'default') fishes[i].hue = 185 + Math.random() * 55;
+    else fishes[i].hue = Math.random() * 360;
+  }
+}
+document.getElementById('btnBlue').addEventListener('click', () => recolorAll('blue'));
+document.getElementById('btnRandDefault').addEventListener('click', () => recolorAll('default'));
+document.getElementById('btnRandRich').addEventListener('click', () => recolorAll('rich'));
+
 /* 数量：指数均匀，slider 0..1000 → 30..5000 */
 const COUNT_MIN = 30, COUNT_MAX = 50000, COUNT_RATIO = COUNT_MAX / COUNT_MIN;
 const sCount = document.getElementById('sCount');
@@ -1137,6 +1322,33 @@ function applyScatterR() {
 }
 sScatterR.addEventListener('input', applyScatterR);
 applyScatterR();
+
+/* 驱散点面板 */
+const btnAddSite = document.getElementById('btnAddSite');
+btnAddSite.addEventListener('click', () => setPlaceMode(!placeSite));
+document.getElementById('btnDelSite').addEventListener('click', () => {
+  if (selectedSite >= 0) { scatterPts.splice(selectedSite, 1); selectedSite = -1; syncSiteEditor(); }
+});
+const sSiteR = document.getElementById('sSiteR'), vSiteR = document.getElementById('vSiteR');
+const sSiteS = document.getElementById('sSiteS'), vSiteS = document.getElementById('vSiteS');
+sSiteR.addEventListener('input', () => {
+  if (selectedSite < 0) return;
+  const r = siteRadius(); scatterPts[selectedSite].r = r; vSiteR.textContent = Math.round(r);
+});
+sSiteS.addEventListener('input', () => {
+  if (selectedSite < 0) return;
+  const s = siteStrength(); scatterPts[selectedSite].s = s; vSiteS.textContent = s.toFixed(2);
+});
+// 新点默认参数（独立于选中点编辑）
+const sDefR = document.getElementById('sDefR'), vDefR = document.getElementById('vDefR');
+const sDefS = document.getElementById('sDefS'), vDefS = document.getElementById('vDefS');
+function syncDefLabels() { vDefR.textContent = Math.round(defRadius()); vDefS.textContent = defStrength().toFixed(2); }
+sDefR.addEventListener('input', syncDefLabels);
+sDefS.addEventListener('input', syncDefLabels);
+syncDefLabels();
+const cbShowAllR = document.getElementById('cbShowAllR');
+cbShowAllR.addEventListener('change', () => { showAllRadii = cbShowAllR.checked; });
+showAllRadii = cbShowAllR.checked;
 
 })();
 </script>
