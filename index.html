@@ -146,6 +146,7 @@
     <input type="range" id="sBrush" min="10" max="400" step="1" value="80"></label>
 </div>
 
+<script src="sim_wasm.js"></script>
 <script>
 (function () {
 'use strict';
@@ -197,37 +198,43 @@ function updateBounds() {
   bounds.bottom = H / 2 + hh;
 }
 
-/* ---------------- 鱼 ---------------- */
-class Fish {
-  constructor() { this.reset(); }
-  reset() {
-    this.x = bounds.left + Math.random() * (bounds.right - bounds.left);
-    this.y = bounds.top + Math.random() * (bounds.bottom - bounds.top);
-    const a = Math.random() * Math.PI * 2;
-    this.vx = Math.cos(a) * params.speed;
-    this.vy = Math.sin(a) * params.speed;
-    this.size = 4 + Math.random() * 3.5;
-    this.hue = 185 + Math.random() * 55;
-    this.phase = Math.random() * Math.PI * 2;
-    this.wander = Math.random() * Math.PI * 2;
-  }
-  edges(nstep) {
-    const e = EDGE_ZONE / params.zoom, k = 0.5 * nstep;
-    if (this.x < bounds.left + e)   this.vx += (1 - (this.x - bounds.left) / e) * k;
-    if (this.x > bounds.right - e)  this.vx -= (1 - (bounds.right - this.x) / e) * k;
-    if (this.y < bounds.top + e)    this.vy += (1 - (this.y - bounds.top) / e) * k;
-    if (this.y > bounds.bottom - e) this.vy -= (1 - (bounds.bottom - this.y) / e) * k;
-    if (this.x < bounds.left)   this.x = bounds.left;
-    if (this.x > bounds.right)  this.x = bounds.right;
-    if (this.y < bounds.top)    this.y = bounds.top;
-    if (this.y > bounds.bottom) this.y = bounds.bottom;
-  }
+/* ---------------- 鱼（Rust / WASM） ---------------- */
+let wasm = null, mem = null;
+let xs, ys, vxs, vys, sizes, hues, phases, paramsF32;
+
+function refreshViews() {
+  const buf = mem.buffer;
+  const n = wasm.sim_len();
+  xs = new Float32Array(buf, wasm.sim_x_ptr(), n);
+  ys = new Float32Array(buf, wasm.sim_y_ptr(), n);
+  vxs = new Float32Array(buf, wasm.sim_vx_ptr(), n);
+  vys = new Float32Array(buf, wasm.sim_vy_ptr(), n);
+  sizes = new Float32Array(buf, wasm.sim_size_ptr(), n);
+  hues = new Float32Array(buf, wasm.sim_hue_ptr(), n);
+  phases = new Float32Array(buf, wasm.sim_phase_ptr(), n);
+  paramsF32 = new Float32Array(buf, wasm.sim_params_ptr(), 24);
+}
+function fishCount() { return wasm ? wasm.sim_len() : 0; }
+
+// 把 JS 参数写进 wasm 的参数缓冲：[0..17] 见 sim 的 step()
+function fillParams() {
+  const b = bounds;
+  paramsF32[0] = params.cohesion; paramsF32[1] = params.separation;
+  paramsF32[2] = params.align; paramsF32[3] = params.speed;
+  paramsF32[4] = params.mouseField ? 1 : 0;
+  paramsF32[5] = mouse.x; paramsF32[6] = mouse.y; paramsF32[7] = params.mRadius;
+  paramsF32[8] = params.mAttract; paramsF32[9] = params.mRepel;
+  paramsF32[10] = mouse.leftDown ? 1 : 0; paramsF32[11] = SCATTER_FORCE;
+  paramsF32[12] = params.wrap ? 1 : 0;
+  paramsF32[13] = b.left; paramsF32[14] = b.top; paramsF32[15] = b.right; paramsF32[16] = b.bottom;
+  paramsF32[17] = params.zoom;
 }
 
-let fishes = [];
-function spawn(n) {
-  fishes = [];
-  for (let i = 0; i < n; i++) fishes.push(new Fish());
+// 按当前数量与边界生成鱼（首次 / 改数量）
+function syncCount() {
+  if (!wasm) return;
+  wasm.sim_set_count(params.count, bounds.left, bounds.top, bounds.right, bounds.bottom, params.speed);
+  refreshViews();
 }
 
 /* ---------------- 交互状态 ---------------- */
@@ -280,7 +287,7 @@ window.addEventListener('keydown', e => {
     document.body.classList.toggle('paused', paused);
     e.preventDefault();
   } else if (e.code === 'KeyR') {
-    spawn(params.count);
+    if (wasm) { wasm.sim_reset(bounds.left, bounds.top, bounds.right, bounds.bottom, params.speed); refreshViews(); }
     simTime = 0;
   } else if (e.code === 'KeyW') {
     speedIdx = Math.min(speedIdx + 1, SPEEDS.length - 1);
@@ -291,178 +298,17 @@ window.addEventListener('keydown', e => {
   }
 });
 
-/* ---------------- 模拟 ---------------- */
-const neighborGrid = new Map();
-const CELL_SIZE = PERCEPTION;
-
+/* ---------------- 模拟（Rust / WASM） ---------------- */
 function update(dt) {
-  const total = fishes.length;
-  const N = dt * REF_TICKS;   // 以 60 tick/s 为基准的步长倍率（dt = 1/60 时 N = 1）
-  const wrap = params.wrap;
-  const wW = bounds.right - bounds.left;
-  const wH = bounds.bottom - bounds.top;
-  const halfW = wW * 0.5, halfH = wH * 0.5;
-
-  // 网格：循环模式下把格子规整到 [0,cols)×[0,rows)，邻格按模取
-  let cols = 0, rows = 0, cw = CELL_SIZE, ch = CELL_SIZE;
-  if (wrap) {
-    cols = Math.max(3, Math.floor(wW / CELL_SIZE));
-    rows = Math.max(3, Math.floor(wH / CELL_SIZE));
-    cw = wW / cols; ch = wH / rows;
-  }
-
-  for (const bucket of neighborGrid.values()) bucket.length = 0;
-  for (let i = 0; i < total; i++) {
-    const f = fishes[i];
-    let gx, gy;
-    if (wrap) {
-      gx = Math.floor((f.x - bounds.left) / cw);
-      gy = Math.floor((f.y - bounds.top) / ch);
-      gx = ((gx % cols) + cols) % cols;
-      gy = ((gy % rows) + rows) % rows;
-    } else {
-      gx = Math.floor(f.x / CELL_SIZE);
-      gy = Math.floor(f.y / CELL_SIZE);
-    }
-    f.gx = gx; f.gy = gy;
-    const key = gx * 100000 + gy;
-    let bucket = neighborGrid.get(key);
-    if (bucket === undefined) { bucket = []; neighborGrid.set(key, bucket); }
-    bucket.push(i);
-  }
-
-  for (let i = 0; i < total; i++) {
-    const f = fishes[i];
-    let cdx = 0, cdy = 0, ax = 0, ay = 0, sdx = 0, sdy = 0;
-    let n = 0, sn = 0;
-
-    for (let ox = -1; ox <= 1; ox++) {
-      for (let oy = -1; oy <= 1; oy++) {
-        let key;
-        if (wrap) {
-          const nx = ((f.gx + ox) % cols + cols) % cols;
-          const ny = ((f.gy + oy) % rows + rows) % rows;
-          key = nx * 100000 + ny;
-        } else {
-          key = (f.gx + ox) * 100000 + (f.gy + oy);
-        }
-        const bucket = neighborGrid.get(key);
-        if (bucket === undefined) continue;
-        for (let b = 0; b < bucket.length; b++) {
-          const j = bucket[b];
-          if (j === i) continue;
-          const o = fishes[j];
-          let dx = o.x - f.x, dy = o.y - f.y;
-          if (wrap) {
-            // 最小镜像（跨边界 & 跨对角边界都靠这个修正）
-            if (dx > halfW) dx -= wW; else if (dx < -halfW) dx += wW;
-            if (dy > halfH) dy -= wH; else if (dy < -halfH) dy += wH;
-          }
-          const d2 = dx * dx + dy * dy;
-          if (d2 > 0 && d2 < PERCEPTION * PERCEPTION) {
-            cdx += dx; cdy += dy;          // 用镜像偏移求质心偏移
-            ax += o.vx; ay += o.vy;
-            n++;
-            if (d2 < SEP_RADIUS * SEP_RADIUS) { sdx -= dx; sdy -= dy; sn++; }
-          }
-        }
-      }
-    }
-
-    let accx = 0, accy = 0;
-    if (n > 0) {
-      const tx = cdx / n, ty = cdy / n;    // 指向邻居质心的平均偏移
-      const td = Math.hypot(tx, ty) || 1;
-      accx += (tx / td) * params.cohesion * 0.32;
-      accy += (ty / td) * params.cohesion * 0.32;
-      const avx = ax / n, avy = ay / n;
-      const ad = Math.hypot(avx, avy) || 1;
-      accx += (avx / ad) * params.align * 0.10;
-      accy += (avy / ad) * params.align * 0.10;
-    }
-    if (sn > 0) {
-      const sd = Math.hypot(sdx, sdy) || 1;
-      accx += (sdx / sd) * params.separation * 0.35;
-      accy += (sdy / sd) * params.separation * 0.35;
-    }
-
-    f.wander += (Math.random() - 0.5) * 0.5 * N;
-    accx += Math.cos(f.wander) * 0.02;
-    accy += Math.sin(f.wander) * 0.02;
-
-    if (mouse.active && params.mouseField) {
-      let dx = mouse.x - f.x, dy = mouse.y - f.y;
-      if (wrap) {
-        if (dx > halfW) dx -= wW; else if (dx < -halfW) dx += wW;
-        if (dy > halfH) dy -= wH; else if (dy < -halfH) dy += wH;
-      }
-      const d = Math.hypot(dx, dy) || 1;
-      if (d < params.mRadius) {
-        const pull = (1 - d / params.mRadius) * params.mAttract;
-        accx += (dx / d) * pull;
-        accy += (dy / d) * pull;
-      }
-      if (d < MOUSE_REPEL_RADIUS) {
-        const push = (1 - d / MOUSE_REPEL_RADIUS) * params.mRepel;
-        accx -= (dx / d) * push;
-        accy -= (dy / d) * push;
-      }
-    }
-
-    // 按住左键：持续驱散（不受鼠标力场开关影响；画笔模式下让位给着色）
-    if (mouse.leftDown && !paint.enabled) {
-      let dx = f.x - mouse.x, dy = f.y - mouse.y;
-      if (wrap) {
-        if (dx > halfW) dx -= wW; else if (dx < -halfW) dx += wW;
-        if (dy > halfH) dy -= wH; else if (dy < -halfH) dy += wH;
-      }
-      const d = Math.hypot(dx, dy) || 1;
-      const p = Math.max(0, 1 - d / SCATTER_RADIUS);
-      accx += (dx / d) * p * SCATTER_FORCE;
-      accy += (dy / d) * p * SCATTER_FORCE;
-    }
-
-    accx *= N;
-    accy *= N;
-    f.vx += accx;
-    f.vy += accy;
-    if (!wrap) f.edges(N);   // 循环模式不做软边界推挤
-
-    const sp = Math.hypot(f.vx, f.vy) || 1;
-    const damp = Math.pow(0.94, N);
-    const newSp = params.speed + (sp - params.speed) * damp;
-    f.vx = (f.vx / sp) * newSp;
-    f.vy = (f.vy / sp) * newSp;
-
-    f.phase += (0.3 + sp * 0.05) * N;
-
-    f.x += f.vx * N;
-    f.y += f.vy * N;
-
-    if (wrap) {
-      // 位置环绕
-      f.x = bounds.left + ((((f.x - bounds.left) % wW) + wW) % wW);
-      f.y = bounds.top + ((((f.y - bounds.top) % wH) + wH) % wH);
-    }
-  }
+  fillParams();
+  wasm.sim_update(dt);
 }
 
-/* 画笔着色：把光标范围内鱼的色相改成画笔色相 */
+/* 画笔着色：把光标范围内鱼的色相改成画笔色相（在 wasm 内完成） */
 function applyPaint() {
-  if (!paint.enabled || !mouse.leftDown || mag.active) return;
-  const wrap = params.wrap;
-  const wW = bounds.right - bounds.left, wH = bounds.bottom - bounds.top;
-  const halfW = wW * 0.5, halfH = wH * 0.5;
-  const r2 = paint.radius * paint.radius;
-  for (let i = 0; i < fishes.length; i++) {
-    const f = fishes[i];
-    let dx = f.x - mouse.x, dy = f.y - mouse.y;
-    if (wrap) {
-      if (dx > halfW) dx -= wW; else if (dx < -halfW) dx += wW;
-      if (dy > halfH) dy -= wH; else if (dy < -halfH) dy += wH;
-    }
-    if (dx * dx + dy * dy <= r2) f.hue = paint.hue;
-  }
+  if (!paint.enabled || !mouse.leftDown || mag.active || !wasm) return;
+  fillParams();
+  wasm.sim_paint(mouse.x, mouse.y, paint.radius, paint.hue);
 }
 
 /* ---------------- 着色器 ---------------- */
@@ -776,7 +622,7 @@ function ensureInst(n) {
 }
 
 function buildInstances() {
-  const n = fishes.length;
+  const n = fishCount();
   const wrap = params.wrap;
   const wW = bounds.right - bounds.left;
   const wH = bounds.bottom - bounds.top;
@@ -786,10 +632,10 @@ function buildInstances() {
   if (wrap) {
     cap = 0;
     for (let i = 0; i < n; i++) {
-      const f = fishes[i], e = f.size * 2;
+      const e = sizes[i] * 2;
       let kx = 1, ky = 1;
-      if (f.x - e < bounds.left || f.x + e > bounds.right) kx++;
-      if (f.y - e < bounds.top || f.y + e > bounds.bottom) ky++;
+      if (xs[i] - e < bounds.left || xs[i] + e > bounds.right) kx++;
+      if (ys[i] - e < bounds.top || ys[i] + e > bounds.bottom) ky++;
       cap += kx * ky;
     }
   }
@@ -798,26 +644,26 @@ function buildInstances() {
   const d = instData;
   let m = 0;
   for (let i = 0; i < n; i++) {
-    const f = fishes[i];
-    const ang = Math.atan2(f.vy, f.vx);
+    const px = xs[i], py = ys[i], sz = sizes[i], hu = hues[i], ph = phases[i];
+    const ang = Math.atan2(vys[i], vxs[i]);
     if (!wrap) {
-      d[m] = f.x; d[m + 1] = f.y; d[m + 2] = ang;
-      d[m + 3] = f.size; d[m + 4] = f.hue; d[m + 5] = f.phase; m += 6;
+      d[m] = px; d[m + 1] = py; d[m + 2] = ang;
+      d[m + 3] = sz; d[m + 4] = hu; d[m + 5] = ph; m += 6;
       continue;
     }
-    const e = f.size * 2;
+    const e = sz * 2;
     let sx = 0, hasSx = false;
-    if (f.x - e < bounds.left) { sx = 1; hasSx = true; }
-    else if (f.x + e > bounds.right) { sx = -1; hasSx = true; }
+    if (px - e < bounds.left) { sx = 1; hasSx = true; }
+    else if (px + e > bounds.right) { sx = -1; hasSx = true; }
     let sy = 0, hasSy = false;
-    if (f.y - e < bounds.top) { sy = 1; hasSy = true; }
-    else if (f.y + e > bounds.bottom) { sy = -1; hasSy = true; }
+    if (py - e < bounds.top) { sy = 1; hasSy = true; }
+    else if (py + e > bounds.bottom) { sy = -1; hasSy = true; }
 
     // 本体
-    d[m] = f.x; d[m + 1] = f.y; d[m + 2] = ang; d[m + 3] = f.size; d[m + 4] = f.hue; d[m + 5] = f.phase; m += 6;
-    if (hasSx) { d[m] = f.x + sx * wW; d[m + 1] = f.y; d[m + 2] = ang; d[m + 3] = f.size; d[m + 4] = f.hue; d[m + 5] = f.phase; m += 6; }
-    if (hasSy) { d[m] = f.x; d[m + 1] = f.y + sy * wH; d[m + 2] = ang; d[m + 3] = f.size; d[m + 4] = f.hue; d[m + 5] = f.phase; m += 6; }
-    if (hasSx && hasSy) { d[m] = f.x + sx * wW; d[m + 1] = f.y + sy * wH; d[m + 2] = ang; d[m + 3] = f.size; d[m + 4] = f.hue; d[m + 5] = f.phase; m += 6; }
+    d[m] = px; d[m + 1] = py; d[m + 2] = ang; d[m + 3] = sz; d[m + 4] = hu; d[m + 5] = ph; m += 6;
+    if (hasSx) { d[m] = px + sx * wW; d[m + 1] = py; d[m + 2] = ang; d[m + 3] = sz; d[m + 4] = hu; d[m + 5] = ph; m += 6; }
+    if (hasSy) { d[m] = px; d[m + 1] = py + sy * wH; d[m + 2] = ang; d[m + 3] = sz; d[m + 4] = hu; d[m + 5] = ph; m += 6; }
+    if (hasSx && hasSy) { d[m] = px + sx * wW; d[m + 1] = py + sy * wH; d[m + 2] = ang; d[m + 3] = sz; d[m + 4] = hu; d[m + 5] = ph; m += 6; }
   }
   instCount = m / 6;
 }
@@ -937,9 +783,8 @@ function render() {
 }
 
 /* ---------------- 主循环 ---------------- */
-(function main() {
+function main() {
   let fpsS = 60, updS = 0, submitS = 0, frameS = 0, frameCount = 0, lastT = performance.now();
-
   function frame() {
     const frameStart = performance.now();
     const dt = frameStart - lastT; lastT = frameStart;
@@ -961,6 +806,7 @@ function render() {
       simTime += realDt * speedMul;
     }
     updS = updS * 0.9 + updTotal * 0.1;
+    refreshViews();
     applyPaint();
 
     // GPU 计时查询：先读取上一帧结果，再开始这一帧
@@ -992,7 +838,7 @@ function render() {
       const clock = mm + ':' + (ss < 10 ? '0' : '') + ss.toFixed(1);
       diagEl.innerHTML =
         `渲染 <b>${submitS.toFixed(1)}</b> · GPU <b>${gpu}</b> · update <b>${upd}</b> ms · 倍速 <b>×${speedMul}</b>` +
-        `<br>帧 <b>${frameS.toFixed(1)}</b> · 周期 <b>${(1000 / fpsS).toFixed(1)}</b> · fps <b>${Math.round(fpsS)}</b> · 鱼 <b>${fishes.length}</b>` +
+        `<br>帧 <b>${frameS.toFixed(1)}</b> · 周期 <b>${(1000 / fpsS).toFixed(1)}</b> · fps <b>${Math.round(fpsS)}</b> · 鱼 <b>${fishCount()}</b>` +
         `<br>逻辑时间 <b>${clock}</b> · tick dt <b>${dtms.toFixed(1)}</b> ms`;
     }
     requestAnimationFrame(frame);
@@ -1000,9 +846,24 @@ function render() {
 
   window.addEventListener('resize', resize);
   resize();
-  spawn(180);
+  applyCount();
   frame();
-})();
+}
+
+/* ---------------- 加载内联 wasm 并启动 ---------------- */
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+WebAssembly.instantiate(b64ToBytes(window.SIM_WASM_B64), {}).then(res => {
+  wasm = res.instance.exports;
+  mem = wasm.memory;
+  wasm.sim_new();
+  refreshViews();
+  main();
+}).catch(err => { diagEl.textContent = 'WASM 加载失败：' + err; });
 
 /* ---------------- 滑条 ---------------- */
 function bind(id, valId, key, fmt) {
@@ -1073,11 +934,7 @@ function applyCount() {
   const target = Math.round(COUNT_MIN * Math.pow(COUNT_RATIO, t));
   params.count = target;
   vCount.textContent = target;
-  if (fishes.length < target) {
-    while (fishes.length < target) fishes.push(new Fish());
-  } else if (fishes.length > target) {
-    fishes.length = target;
-  }
+  if (wasm) syncCount();
 }
 sCount.addEventListener('input', applyCount);
 applyCount();
@@ -1090,10 +947,7 @@ function applyZoom() {
   const t = parseFloat(sZoom.value) / 1000;
   const newZoom = ZOOM_MIN * Math.pow(ZOOM_RATIO, t);
   const r = params.zoom / newZoom;
-  for (const f of fishes) {
-    f.x = W / 2 + (f.x - W / 2) * r;
-    f.y = H / 2 + (f.y - H / 2) * r;
-  }
+  if (wasm) wasm.sim_rescale(W / 2, H / 2, r);   // 世界坐标随缩放反向等比缩放
   params.zoom = newZoom;
   vZoom.textContent = params.zoom.toFixed(2) + '×';
 }
