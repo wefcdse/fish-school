@@ -10,6 +10,130 @@ const REF_TICKS: f32 = 60.0;
 const CELL_SIZE: f32 = PERCEPTION;
 const PARAM_LEN: usize = 24;
 
+#[derive(Default, Clone, Copy)]
+struct Acc {
+    cdx: f32, cdy: f32, avx: f32, avy: f32, sdx: f32, sdy: f32,
+    cnt: i32, scnt: i32,
+}
+
+#[cfg(target_feature = "simd128")]
+use core::arch::wasm32::*;
+
+#[cfg(target_feature = "simd128")]
+#[inline]
+unsafe fn hsum_f32(v: v128) -> f32 {
+    f32x4_extract_lane::<0>(v) + f32x4_extract_lane::<1>(v)
+        + f32x4_extract_lane::<2>(v) + f32x4_extract_lane::<3>(v)
+}
+#[cfg(target_feature = "simd128")]
+#[inline]
+unsafe fn hsum_i32(v: v128) -> i32 {
+    i32x4_extract_lane::<0>(v) + i32x4_extract_lane::<1>(v)
+        + i32x4_extract_lane::<2>(v) + i32x4_extract_lane::<3>(v)
+}
+
+// 处理邻格区间 [s,e)，把凝聚/对齐/分离的累加值并入 acc
+#[cfg(target_feature = "simd128")]
+#[inline]
+unsafe fn accum_range(
+    xp: *const f32, yp: *const f32, vxp: *const f32, vyp: *const f32,
+    s: usize, e: usize,
+    fx: f32, fy: f32, hw: f32, ww: f32, hh: f32, wh: f32,
+    perception2: f32, sep2: f32, wrap: bool,
+    acc: &mut Acc,
+) {
+    let fxv = f32x4_splat(fx); let fyv = f32x4_splat(fy);
+    let hwv = f32x4_splat(hw); let wwv = f32x4_splat(ww);
+    let hhv = f32x4_splat(hh); let whv = f32x4_splat(wh);
+    let nhwv = f32x4_splat(-hw); let nhhv = f32x4_splat(-hh);
+    let zv = f32x4_splat(0.0);
+    let p2v = f32x4_splat(perception2); let sepv = f32x4_splat(sep2);
+    let one = i32x4_splat(1);
+
+    let mut cdxv = zv; let mut cdyv = zv;
+    let mut avxv = zv; let mut avyv = zv;
+    let mut sdxv = zv; let mut sdyv = zv;
+    let mut cntv = i32x4_splat(0); let mut scntv = i32x4_splat(0);
+
+    let mut k = s;
+    while k + 4 <= e {
+        let mut dxv = f32x4_sub(v128_load(xp.add(k) as *const v128), fxv);
+        let mut dyv = f32x4_sub(v128_load(yp.add(k) as *const v128), fyv);
+        if wrap {
+            let gx = f32x4_gt(dxv, hwv);
+            let lx = f32x4_lt(dxv, nhwv);
+            let dxa = v128_bitselect(f32x4_sub(dxv, wwv), dxv, gx);
+            dxv = v128_bitselect(f32x4_add(dxa, wwv), dxa, lx);
+            let gy = f32x4_gt(dyv, hhv);
+            let ly = f32x4_lt(dyv, nhhv);
+            let dya = v128_bitselect(f32x4_sub(dyv, whv), dyv, gy);
+            dyv = v128_bitselect(f32x4_add(dya, whv), dya, ly);
+        }
+        let d2 = f32x4_add(f32x4_mul(dxv, dxv), f32x4_mul(dyv, dyv));
+        let mgt = f32x4_gt(d2, zv);
+        let m = v128_and(mgt, f32x4_lt(d2, p2v));
+        cdxv = f32x4_add(cdxv, v128_bitselect(dxv, zv, m));
+        cdyv = f32x4_add(cdyv, v128_bitselect(dyv, zv, m));
+        avxv = f32x4_add(avxv, v128_bitselect(v128_load(vxp.add(k) as *const v128), zv, m));
+        avyv = f32x4_add(avyv, v128_bitselect(v128_load(vyp.add(k) as *const v128), zv, m));
+        cntv = i32x4_add(cntv, v128_and(m, one));
+        let ms = v128_and(mgt, f32x4_lt(d2, sepv));
+        sdxv = f32x4_sub(sdxv, v128_bitselect(dxv, zv, ms));
+        sdyv = f32x4_sub(sdyv, v128_bitselect(dyv, zv, ms));
+        scntv = i32x4_add(scntv, v128_and(ms, one));
+        k += 4;
+    }
+    acc.cdx += hsum_f32(cdxv); acc.cdy += hsum_f32(cdyv);
+    acc.avx += hsum_f32(avxv); acc.avy += hsum_f32(avyv);
+    acc.sdx += hsum_f32(sdxv); acc.sdy += hsum_f32(sdyv);
+    acc.cnt += hsum_i32(cntv); acc.scnt += hsum_i32(scntv);
+
+    while k < e {
+        let mut dx = *xp.add(k) - fx;
+        let mut dy = *yp.add(k) - fy;
+        if wrap {
+            if dx > hw { dx -= ww; } else if dx < -hw { dx += ww; }
+            if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
+        }
+        let d2 = dx * dx + dy * dy;
+        if d2 > 0.0 && d2 < perception2 {
+            acc.cdx += dx; acc.cdy += dy;
+            acc.avx += *vxp.add(k); acc.avy += *vyp.add(k);
+            acc.cnt += 1;
+            if d2 < sep2 { acc.sdx -= dx; acc.sdy -= dy; acc.scnt += 1; }
+        }
+        k += 1;
+    }
+}
+
+#[cfg(not(target_feature = "simd128"))]
+#[inline]
+unsafe fn accum_range(
+    xp: *const f32, yp: *const f32, vxp: *const f32, vyp: *const f32,
+    s: usize, e: usize,
+    fx: f32, fy: f32, hw: f32, ww: f32, hh: f32, wh: f32,
+    perception2: f32, sep2: f32, wrap: bool,
+    acc: &mut Acc,
+) {
+    let mut k = s;
+    while k < e {
+        let mut dx = *xp.add(k) - fx;
+        let mut dy = *yp.add(k) - fy;
+        if wrap {
+            if dx > hw { dx -= ww; } else if dx < -hw { dx += ww; }
+            if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
+        }
+        let d2 = dx * dx + dy * dy;
+        if d2 > 0.0 && d2 < perception2 {
+            acc.cdx += dx; acc.cdy += dy;
+            acc.avx += *vxp.add(k); acc.avy += *vyp.add(k);
+            acc.cnt += 1;
+            if d2 < sep2 { acc.sdx -= dx; acc.sdy -= dy; acc.scnt += 1; }
+        }
+        k += 1;
+    }
+}
+
 pub struct Sim {
     x: Vec<f32>, y: Vec<f32>, vx: Vec<f32>, vy: Vec<f32>,
     size: Vec<f32>, hue: Vec<f32>, phase: Vec<f32>, wander: Vec<f32>,
@@ -234,10 +358,7 @@ impl Sim {
         for i in 0..n {
             let fx = self.x[i]; let fy = self.y[i];
             let gx = self.gx[i]; let gy = self.gy[i];
-            let mut cdx = 0.0f32; let mut cdy = 0.0f32;
-            let mut avx = 0.0f32; let mut avy = 0.0f32;
-            let mut sdx = 0.0f32; let mut sdy = 0.0f32;
-            let mut cnt = 0i32; let mut scnt = 0i32;
+            let mut acc = Acc::default();
 
             // 邻格列/行索引：wrap 用条件回绕（无整数除法），非 wrap 用 -1 表示越界
             let xc0 = if wrap { if gx == 0 { cols - 1 } else { gx - 1 } } else { gx - 1 };
@@ -247,32 +368,27 @@ impl Sim {
             let xcs = [xc0, gx, xc2];
             let ycs = [yc0, gy, yc2];
 
-            for &cx in xcs.iter() {
-                if cx < 0 || cx >= cols { continue; }
-                let cxb = cx as usize;
-                for &cy in ycs.iter() {
-                    if cy < 0 || cy >= rows { continue; }
-                    let c = cy as usize * cols_u + cxb;
-                    let s = self.cell_start[c] as usize;
-                    let e = self.cell_start[c + 1] as usize;
-                    for k in s..e {
-                        if k == i { continue; }
-                        let mut dx = self.x[k] - fx;
-                        let mut dy = self.y[k] - fy;
-                        if wrap {
-                            if dx > hw { dx -= ww; } else if dx < -hw { dx += ww; }
-                            if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
-                        }
-                        let d2 = dx * dx + dy * dy;
-                        if d2 > 0.0 && d2 < perception2 {
-                            cdx += dx; cdy += dy;
-                            avx += self.vx[k]; avy += self.vy[k];
-                            cnt += 1;
-                            if d2 < sep2 { sdx -= dx; sdy -= dy; scnt += 1; }
-                        }
+            unsafe {
+                let xp = self.x.as_ptr(); let yp = self.y.as_ptr();
+                let vxp = self.vx.as_ptr(); let vyp = self.vy.as_ptr();
+                for &cx in xcs.iter() {
+                    if cx < 0 || cx >= cols { continue; }
+                    let cxb = cx as usize;
+                    for &cy in ycs.iter() {
+                        if cy < 0 || cy >= rows { continue; }
+                        let c = cy as usize * cols_u + cxb;
+                        let s = self.cell_start[c] as usize;
+                        let e = self.cell_start[c + 1] as usize;
+                        if s == e { continue; }
+                        accum_range(xp, yp, vxp, vyp, s, e, fx, fy, hw, ww, hh, wh, perception2, sep2, wrap, &mut acc);
                     }
                 }
             }
+
+            let cdx = acc.cdx; let cdy = acc.cdy;
+            let avx = acc.avx; let avy = acc.avy;
+            let sdx = acc.sdx; let sdy = acc.sdy;
+            let cnt = acc.cnt; let scnt = acc.scnt;
 
             let mut accx = 0.0f32; let mut accy = 0.0f32;
             if cnt > 0 {
