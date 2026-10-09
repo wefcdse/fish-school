@@ -15,6 +15,10 @@ pub struct Sim {
     size: Vec<f32>, hue: Vec<f32>, phase: Vec<f32>, wander: Vec<f32>,
     accx: Vec<f32>, accy: Vec<f32>,
     gx: Vec<i32>, gy: Vec<i32>,
+    // 按格重排用的暂存缓冲（每帧排列后与主缓冲交换）
+    sx: Vec<f32>, sy: Vec<f32>, svx: Vec<f32>, svy: Vec<f32>,
+    ssize: Vec<f32>, shue: Vec<f32>, sphase: Vec<f32>, swander: Vec<f32>,
+    sgx: Vec<i32>, sgy: Vec<i32>,
     cell_idx: Vec<u32>, cell_start: Vec<u32>, cell_cursor: Vec<u32>, order: Vec<u32>,
     last_ncells: usize,
     stat_lens: Vec<u32>,
@@ -28,6 +32,9 @@ impl Sim {
             size: Vec::new(), hue: Vec::new(), phase: Vec::new(), wander: Vec::new(),
             accx: Vec::new(), accy: Vec::new(),
             gx: Vec::new(), gy: Vec::new(),
+            sx: Vec::new(), sy: Vec::new(), svx: Vec::new(), svy: Vec::new(),
+            ssize: Vec::new(), shue: Vec::new(), sphase: Vec::new(), swander: Vec::new(),
+            sgx: Vec::new(), sgy: Vec::new(),
             cell_idx: Vec::new(), cell_start: Vec::new(), cell_cursor: Vec::new(), order: Vec::new(),
             last_ncells: 0,
             stat_lens: Vec::new(),
@@ -193,6 +200,36 @@ impl Sim {
             self.cell_cursor[c] = pos + 1;
         }
 
+        // 按格重排鱼数据：邻格读取由随机 gather 变为连续内存
+        self.sx.resize(n, 0.0); self.sy.resize(n, 0.0);
+        self.svx.resize(n, 0.0); self.svy.resize(n, 0.0);
+        self.ssize.resize(n, 0.0); self.shue.resize(n, 0.0);
+        self.sphase.resize(n, 0.0); self.swander.resize(n, 0.0);
+        self.sgx.resize(n, 0); self.sgy.resize(n, 0);
+        for pos in 0..n {
+            let i = self.order[pos] as usize;
+            self.sx[pos] = self.x[i];
+            self.sy[pos] = self.y[i];
+            self.svx[pos] = self.vx[i];
+            self.svy[pos] = self.vy[i];
+            self.ssize[pos] = self.size[i];
+            self.shue[pos] = self.hue[i];
+            self.sphase[pos] = self.phase[i];
+            self.swander[pos] = self.wander[i];
+            self.sgx[pos] = self.gx[i];
+            self.sgy[pos] = self.gy[i];
+        }
+        std::mem::swap(&mut self.x, &mut self.sx);
+        std::mem::swap(&mut self.y, &mut self.sy);
+        std::mem::swap(&mut self.vx, &mut self.svx);
+        std::mem::swap(&mut self.vy, &mut self.svy);
+        std::mem::swap(&mut self.size, &mut self.ssize);
+        std::mem::swap(&mut self.hue, &mut self.shue);
+        std::mem::swap(&mut self.phase, &mut self.sphase);
+        std::mem::swap(&mut self.wander, &mut self.swander);
+        std::mem::swap(&mut self.gx, &mut self.sgx);
+        std::mem::swap(&mut self.gy, &mut self.sgy);
+
         // 逐鱼求力（Jacobi：先全部算力，再统一积分）
         for i in 0..n {
             let fx = self.x[i]; let fy = self.y[i];
@@ -219,10 +256,9 @@ impl Sim {
                     let s = self.cell_start[c] as usize;
                     let e = self.cell_start[c + 1] as usize;
                     for k in s..e {
-                        let j = self.order[k] as usize;
-                        if j == i { continue; }
-                        let mut dx = self.x[j] - fx;
-                        let mut dy = self.y[j] - fy;
+                        if k == i { continue; }
+                        let mut dx = self.x[k] - fx;
+                        let mut dy = self.y[k] - fy;
                         if wrap {
                             if dx > hw { dx -= ww; } else if dx < -hw { dx += ww; }
                             if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
@@ -230,7 +266,7 @@ impl Sim {
                         let d2 = dx * dx + dy * dy;
                         if d2 > 0.0 && d2 < perception2 {
                             cdx += dx; cdy += dy;
-                            avx += self.vx[j]; avy += self.vy[j];
+                            avx += self.vx[k]; avy += self.vy[k];
                             cnt += 1;
                             if d2 < sep2 { sdx -= dx; sdy -= dy; scnt += 1; }
                         }
