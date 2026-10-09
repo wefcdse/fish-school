@@ -511,7 +511,7 @@ function update(dt) {
             cdx += dx; cdy += dy;          // 用镜像偏移求质心偏移
             ax += o.vx; ay += o.vy;
             n++;
-            if (d2 < SEP_RADIUS * SEP_RADIUS) { sdx -= dx; sdy -= dy; sn++; }
+            if (d2 < SEP_RADIUS * SEP_RADIUS) { const w = 1 - d2 / (SEP_RADIUS * SEP_RADIUS); sdx -= dx * w; sdy -= dy * w; sn++; }   // 越近越强
           }
         }
       }

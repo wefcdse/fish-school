@@ -52,6 +52,8 @@ unsafe fn proc_range(
     let mut avxv = v.avx; let mut avyv = v.avy;
     let mut sdxv = v.sdx; let mut sdyv = v.sdy;
     let mut cntv = v.cnt; let mut scntv = v.scnt;
+    let one_f = f32x4_splat(1.0);
+    let invsep2 = f32x4_splat(1.0 / sep2);
 
     let mut k = s;
     while k + 4 <= e {
@@ -76,8 +78,10 @@ unsafe fn proc_range(
         avyv = f32x4_add(avyv, v128_bitselect(v128_load(vyp.add(k) as *const v128), zv, m));
         cntv = i32x4_add(cntv, v128_and(m, one));
         let ms = v128_and(mgt, f32x4_lt(d2, sepv));
-        sdxv = f32x4_sub(sdxv, v128_bitselect(dxv, zv, ms));
-        sdyv = f32x4_sub(sdyv, v128_bitselect(dyv, zv, ms));
+        // 分离按距离加权：越近越强（w = 1 - d²/sep²），避免鱼群抱团重合
+        let wm = v128_bitselect(f32x4_sub(one_f, f32x4_mul(d2, invsep2)), zv, ms);
+        sdxv = f32x4_sub(sdxv, f32x4_mul(dxv, wm));
+        sdyv = f32x4_sub(sdyv, f32x4_mul(dyv, wm));
         scntv = i32x4_add(scntv, v128_and(ms, one));
         k += 4;
     }
@@ -96,7 +100,7 @@ unsafe fn proc_range(
             tail.cdx += dx; tail.cdy += dy;
             tail.avx += *vxp.add(k); tail.avy += *vyp.add(k);
             tail.cnt += 1;
-            if d2 < sep2 { tail.sdx -= dx; tail.sdy -= dy; tail.scnt += 1; }
+                if d2 < sep2 { let w = 1.0 - d2 / sep2; tail.sdx -= dx * w; tail.sdy -= dy * w; tail.scnt += 1; }
         }
         k += 1;
     }
@@ -499,7 +503,7 @@ impl Sim {
                         acc.cdx += dx; acc.cdy += dy;
                         acc.avx += self.vx[k]; acc.avy += self.vy[k];
                         acc.cnt += 1;
-                        if d2 < sep2 { acc.sdx -= dx; acc.sdy -= dy; acc.scnt += 1; }
+                        if d2 < sep2 { let w = 1.0 - d2 / sep2; acc.sdx -= dx * w; acc.sdy -= dy * w; acc.scnt += 1; }
                     }
                 }
             }
