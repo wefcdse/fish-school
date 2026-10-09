@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>鱼群模拟 · Boids (WebGL)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box;
+      -webkit-user-select: none; user-select: none; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    background: #040a14;
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    color: #cfe6ff;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  .hud {
+    position: fixed; left: 22px; bottom: 20px;
+    font-size: 13px; line-height: 1.9; letter-spacing: .3px;
+    color: #7fb4e8; text-shadow: 0 0 12px rgba(80,170,255,.35);
+    pointer-events: none; user-select: none;
+  }
+  .hud b { color: #a9d4ff; font-weight: 600; }
+  .title {
+    position: fixed; left: 22px; top: 18px;
+    font-size: 15px; font-weight: 600; letter-spacing: 4px;
+    color: #9fc8f0; opacity: .85; text-shadow: 0 0 16px rgba(90,180,255,.4);
+    pointer-events: none; user-select: none;
+  }
+  .title small { display: block; font-size: 11px; letter-spacing: 1px; opacity: .5; margin-top: 4px; font-weight: 400; }
+  .diag {
+    position: fixed; left: 22px; top: 66px;
+    font-size: 11px; line-height: 1.8; color: #6aa8dd;
+    font-variant-numeric: tabular-nums; letter-spacing: .3px;
+    white-space: nowrap;
+    opacity: .85; pointer-events: none; user-select: none;
+  }
+  .diag b { color: #a9d4ff; font-weight: 600; }
+  #pause {
+    position: fixed; left: 50%; top: 50%;
+    transform: translate(-50%, -50%) scale(.92);
+    padding: 10px 26px; border-radius: 999px;
+    font-size: 14px; letter-spacing: 6px; color: #bfe0ff;
+    background: rgba(10,40,70,.4);
+    border: 1px solid rgba(120,190,255,.25);
+    backdrop-filter: blur(6px);
+    opacity: 0; pointer-events: none; user-select: none;
+    transition: opacity .2s ease, transform .2s ease;
+  }
+  body.paused #pause { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  .panel, .hud, .title, .diag { transition: opacity .2s ease; }
+  body.ui-min .panel,
+  body.ui-min .hud,
+  body.ui-min #pause { opacity: 0; pointer-events: none; }
+  body.ui-hidden .panel,
+  body.ui-hidden .hud,
+  body.ui-hidden .title,
+  body.ui-hidden .diag,
+  body.ui-hidden #pause { opacity: 0; pointer-events: none; }
+  .panel {
+    position: fixed; right: 20px; top: 18px;
+    display: flex; flex-direction: column; gap: 10px;
+    background: rgba(10,40,70,.35);
+    border: 1px solid rgba(90,160,240,.18);
+    border-radius: 14px; padding: 14px 16px;
+    backdrop-filter: blur(8px);
+    font-size: 12px; width: 190px;
+    max-height: calc(100vh - 36px); overflow-y: auto;
+  }
+  .panel label { display: flex; flex-direction: column; gap: 5px; color: #8fbbe6; }
+  .panel label.chk {
+    flex-direction: row; align-items: center; gap: 8px;
+    color: #a9d4ff; cursor: pointer;
+  }
+  .panel label.chk input { accent-color: #4da3ff; width: 14px; height: 14px; cursor: pointer; }
+  .panel input[type=range] { width: 100%; accent-color: #4da3ff; cursor: pointer; height: 3px; }
+  .panel .val { float: right; color: #cfe6ff; }
+  .panel .row { display: flex; justify-content: space-between; color: #8fbbe6; }
+  .panel .divider {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 2px; font-size: 10px; letter-spacing: 2px; color: #6d9cc8;
+  }
+  .panel .divider::before, .panel .divider::after {
+    content: ""; flex: 1; height: 1px; background: rgba(90,160,240,.2);
+  }
+  .panel.paint { right: auto; left: 22px; top: 150px; }
+  .panel input[type=color] {
+    width: 100%; height: 26px; padding: 0; cursor: pointer;
+    border: 1px solid rgba(90,160,240,.3); border-radius: 6px;
+    background: transparent;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="title">鱼群模拟<small>BOIDS FLOCKING · WEBGL</small></div>
+<div class="diag" id="diag"></div>
+<div id="pause">已暂停</div>
+
+<div class="panel">
+  <div class="row"><span>鱼群数量</span><span class="val" id="vCount">180</span></div>
+  <input type="range" id="sCount" min="0" max="1000" step="1" value="242">
+  <label>凝聚力 <span class="val" id="vCohesion"></span>
+    <input type="range" id="sCohesion" min="0" max="2" step="0.01" value="0.55"></label>
+  <label>分离力 <span class="val" id="vSeparation"></span>
+    <input type="range" id="sSeparation" min="0" max="3" step="0.01" value="1.4"></label>
+  <label>对齐力 <span class="val" id="vAlign"></span>
+    <input type="range" id="sAlign" min="0" max="2" step="0.01" value="1.0"></label>
+  <label>速度 <span class="val" id="vSpeed"></span>
+    <input type="range" id="sSpeed" min="0.4" max="3" step="0.05" value="1.4"></label>
+  <label>扰动 <span class="val" id="vWander"></span>
+    <input type="range" id="sWander" min="0" max="5" step="0.05" value="1"></label>
+
+  <div class="divider"><span>鼠标力场</span></div>
+  <label class="chk"><input type="checkbox" id="cbMouse"> 启用鼠标力场</label>
+  <label>吸引力 <span class="val" id="vMAttract"></span>
+    <input type="range" id="sMAttract" min="0" max="2" step="0.01" value="0.5"></label>
+  <label>排斥力 <span class="val" id="vMRepel"></span>
+    <input type="range" id="sMRepel" min="0" max="3" step="0.01" value="0.8"></label>
+  <label>影响半径 <span class="val" id="vMRadius"></span>
+    <input type="range" id="sMRadius" min="80" max="600" step="1" value="320"></label>
+
+  <div class="divider"><span>视图</span></div>
+  <label>缩放 <span class="val" id="vZoom"></span>
+    <input type="range" id="sZoom" min="0" max="1000" step="1" value="812"></label>
+
+  <div class="divider"><span>边界</span></div>
+  <label class="chk"><input type="checkbox" id="cbWrap" checked> 循环边界（环绕）</label>
+
+  <div class="divider"><span>放大镜（中键）</span></div>
+  <label>放大倍数 <span class="val" id="vMag"></span>
+    <input type="range" id="sMag" min="1.5" max="8" step="0.1" value="3"></label>
+  <label>镜圈大小 <span class="val" id="vMagR"></span>
+    <input type="range" id="sMagR" min="50" max="220" step="1" value="96"></label>
+</div>
+
+<div class="hud">
+  <div>移动鼠标 → 蓝色力场吸引鱼群，内圈橙色排斥</div>
+  <div><b>中键</b> 放大镜 · <b>左键</b> 按住驱散 · <b>空格</b> 暂停 · <b>R</b> 重置 · <b>W/S</b> 倍速 · <b>F1</b> 界面</div>
+</div>
+
+<div class="panel paint">
+  <div class="row"><span>鱼群着色</span></div>
+  <label class="chk"><input type="checkbox" id="cbPaint"> 启用画笔</label>
+  <label>颜色 <input type="color" id="paintColor" value="#ff6a3c"></label>
+  <label>画笔大小 <span class="val" id="vBrush"></span>
+    <input type="range" id="sBrush" min="10" max="400" step="1" value="80"></label>
+</div>
+
+<script src="sim_wasm.js"></script>
+<script>
+(function () {
+'use strict';
+
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
+const diagEl = document.getElementById('diag');
+if (!gl) { diagEl.textContent = '需要 WebGL2 支持'; return; }
+
+let W, H, dpr;
+
+/* ---------------- 参数 ---------------- */
+const params = {
+  count: 180,
+  cohesion: 0.55,
+  separation: 1.4,
+  align: 1.0,
+  speed: 1.4,
+  wander: 1.0,
+  mAttract: 0.5,
+  mRepel: 0.8,
+  mRadius: 320,
+  mouseField: false,
+  zoom: 1,
+  magZoom: 3,
+  magRadius: 96,
+  wrap: true
+};
+
+const PERCEPTION = 60;
+const SEP_RADIUS = 22;
+const MOUSE_REPEL_RADIUS = 70;
+const SCATTER_RADIUS = 260;         // 按住左键驱散的影响半径
+const SCATTER_FORCE = 1.5;          // 驱散加速度强度（按住期间持续作用）
+const EDGE_ZONE = 80;
+const REF_TICKS = 60;              // 积分基准：dt = 1/60 时步长倍率 N = 1
+const MAX_DT = 0.1;                // 单 tick 最大积分时长（秒），防卡顿大跳
+const MAX_FISH = 50000;
+const BG = [4 / 255, 10 / 255, 20 / 255];
+const FADE_ALPHA = 0.22;
+
+/* 边界跟随视图 */
+const bounds = { left: 0, top: 0, right: 0, bottom: 0 };
+function updateBounds() {
+  const hw = W / (2 * params.zoom);
+  const hh = H / (2 * params.zoom);
+  bounds.left = W / 2 - hw;
+  bounds.right = W / 2 + hw;
+  bounds.top = H / 2 - hh;
+  bounds.bottom = H / 2 + hh;
+}
+
+/* ---------------- 鱼（Rust / WASM） ---------------- */
+let wasm = null, mem = null;
+let xs, ys, vxs, vys, sizes, hues, phases, paramsF32, statsF32;
+
+function refreshViews() {
+  const buf = mem.buffer;
+  const n = wasm.sim_len();
+  xs = new Float32Array(buf, wasm.sim_x_ptr(), n);
+  ys = new Float32Array(buf, wasm.sim_y_ptr(), n);
+  vxs = new Float32Array(buf, wasm.sim_vx_ptr(), n);
+  vys = new Float32Array(buf, wasm.sim_vy_ptr(), n);
+  sizes = new Float32Array(buf, wasm.sim_size_ptr(), n);
+  hues = new Float32Array(buf, wasm.sim_hue_ptr(), n);
+  phases = new Float32Array(buf, wasm.sim_phase_ptr(), n);
+  paramsF32 = new Float32Array(buf, wasm.sim_params_ptr(), 24);
+  statsF32 = new Float32Array(buf, wasm.sim_stats_ptr(), 8);
+}
+function fishCount() { return wasm ? wasm.sim_len() : 0; }
+
+// 把 JS 参数写进 wasm 的参数缓冲：[0..17] 见 sim 的 step()
+function fillParams() {
+  const b = bounds;
+  paramsF32[0] = params.cohesion; paramsF32[1] = params.separation;
+  paramsF32[2] = params.align; paramsF32[3] = params.speed;
+  paramsF32[4] = params.mouseField ? 1 : 0;
+  paramsF32[5] = mouse.x; paramsF32[6] = mouse.y; paramsF32[7] = params.mRadius;
+  paramsF32[8] = params.mAttract; paramsF32[9] = params.mRepel;
+  paramsF32[10] = mouse.leftDown ? 1 : 0; paramsF32[11] = SCATTER_FORCE;
+  paramsF32[12] = params.wrap ? 1 : 0;
+  paramsF32[13] = b.left; paramsF32[14] = b.top; paramsF32[15] = b.right; paramsF32[16] = b.bottom;
+  paramsF32[17] = params.zoom;
+  paramsF32[18] = params.wander;
+}
+
+// 按当前数量与边界生成鱼（首次 / 改数量）
+function syncCount() {
+  if (!wasm) return;
+  wasm.sim_set_count(params.count, bounds.left, bounds.top, bounds.right, bounds.bottom, params.speed);
+  refreshViews();
+}
+
+/* ---------------- 交互状态 ---------------- */
+const mouse = { x: -9999, y: -9999, sx: -9999, sy: -9999, active: false, leftDown: false };
+function screenToWorld(sx, sy) {
+  const z = params.zoom;
+  return { x: (sx - W / 2) / z + W / 2, y: (sy - H / 2) / z + H / 2 };
+}
+const mag = { active: false };
+const paint = { enabled: false, hue: 20, radius: 80 };  // 画笔：色相 + 半径
+let paused = false;
+let uiMode = 0;   // 0 全显示 / 1 只留左上性能 / 2 全隐藏
+const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 3, 5, 8, 16];
+let speedIdx = 3;                 // 指向 1.0×
+let speedMul = SPEEDS[speedIdx];  // 倍速：只缩放传进 tick 的 dt
+let simTime = 0;                  // 逻辑(模拟)时间累积（秒）
+
+window.addEventListener('mousemove', e => {
+  if (e.target !== canvas) { mouse.active = false; return; }   // 落在 UI 上的移动不驱动画布
+  mouse.sx = e.clientX; mouse.sy = e.clientY;
+  const w = screenToWorld(e.clientX, e.clientY);
+  mouse.x = w.x; mouse.y = w.y; mouse.active = true;
+});
+window.addEventListener('mouseleave', () => { mouse.active = false; mouse.leftDown = false; mag.active = false; });
+window.addEventListener('mousedown', e => {
+  if (e.target !== canvas) return;   // 落在 UI 上的按下不驱动画布
+  if (e.button === 0) {
+    mouse.leftDown = true; mouse.sx = e.clientX; mouse.sy = e.clientY; mouse.active = true;
+  } else if (e.button === 1) {
+    mag.active = true; mouse.sx = e.clientX; mouse.sy = e.clientY; e.preventDefault();
+  }
+});
+window.addEventListener('mouseup', e => {
+  // 释放始终处理，避免在画布外松手后按住状态卡住
+  if (e.button === 0) mouse.leftDown = false;
+  else if (e.button === 1) mag.active = false;
+});
+window.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
+window.addEventListener('keydown', e => {
+  if (e.code === 'F1') {                 // F1：全显示 → 只留左上性能 → 全隐藏 循环
+    uiMode = (uiMode + 1) % 3;
+    document.body.classList.toggle('ui-min', uiMode === 1);
+    document.body.classList.toggle('ui-hidden', uiMode === 2);
+    e.preventDefault();
+    return;
+  }
+  if (e.target && e.target.tagName === 'INPUT') return;   // 焦点在 UI 控件上时不触发画布快捷键
+  if (e.code === 'Space') {
+    paused = !paused;
+    document.body.classList.toggle('paused', paused);
+    e.preventDefault();
+  } else if (e.code === 'KeyR') {
+    if (wasm) { wasm.sim_reset(bounds.left, bounds.top, bounds.right, bounds.bottom, params.speed); refreshViews(); }
+    simTime = 0;
+  } else if (e.code === 'KeyW') {
+    speedIdx = Math.min(speedIdx + 1, SPEEDS.length - 1);
+    speedMul = SPEEDS[speedIdx];
+  } else if (e.code === 'KeyS') {
+    speedIdx = Math.max(speedIdx - 1, 0);
+    speedMul = SPEEDS[speedIdx];
+  }
+});
+
+/* ---------------- 模拟（Rust / WASM） ---------------- */
+function update(dt) {
+  fillParams();
+  wasm.sim_update(dt);
+}
+
+/* 画笔着色：把光标范围内鱼的色相改成画笔色相（在 wasm 内完成） */
+function applyPaint() {
+  if (!paint.enabled || !mouse.leftDown || mag.active || !wasm) return;
+  fillParams();
+  wasm.sim_paint(mouse.x, mouse.y, paint.radius, paint.hue);
+}
+
+/* ---------------- 着色器 ---------------- */
+const QUAD_VS = `#version 300 es
+layout(location=0) in vec2 a_pos;
+out vec2 v_uv;
+void main(){ v_uv = a_pos * 0.5 + 0.5; gl_Position = vec4(a_pos, 0.0, 1.0); }`;
+
+const FADE_FS = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform vec4 u_color;
+out vec4 outColor;
+void main(){ outColor = u_color; }`;
+
+const BLIT_FS = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform sampler2D u_tex;
+out vec4 outColor;
+void main(){ outColor = vec4(texture(u_tex, v_uv).rgb, 1.0); }`;
+
+const LENS_FS = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform vec2 u_resDev;
+uniform vec2 u_center;
+uniform float u_radius;
+uniform float u_isRing;
+out vec4 outColor;
+void main(){
+  vec2 frag = v_uv * u_resDev;
+  float d = distance(frag, u_center);
+  if (u_isRing < 0.5) {
+    if (d > u_radius) discard;
+    float t = clamp(d / u_radius + 0.15, 0.0, 1.0);
+    vec3 top = vec3(10.0,37.0,64.0)/255.0;
+    vec3 bot = vec3(4.0,10.0,20.0)/255.0;
+    outColor = vec4(mix(top, bot, t), 1.0);
+  } else {
+    if (d > u_radius + 1.5) discard;
+    float a = smoothstep(u_radius - 3.0, u_radius, d);
+    outColor = vec4(0.63, 0.88, 1.0, a * 0.9);
+  }
+}`;
+
+const FIELD_FS = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+uniform vec2 u_resDev;
+uniform vec2 u_center;
+uniform float u_radius;
+uniform float u_repelR;
+uniform float u_attract;
+uniform float u_repel;
+out vec4 outColor;
+void main(){
+  vec2 frag = v_uv * u_resDev;
+  float d = distance(frag, u_center);
+  if (d > u_radius) discard;
+  float t = d / u_radius;
+  float aBlue = (0.05 + u_attract * 0.06) * (1.0 - t);
+  vec3 col = vec3(90.0,190.0,255.0)/255.0;
+  float alpha = aBlue;
+  if (u_repel > 0.02) {
+    float ring = 1.0 - smoothstep(0.0, 2.0, abs(d - u_repelR));
+    col = mix(col, vec3(255.0,150.0,120.0)/255.0, ring);
+    alpha = max(alpha, ring * (0.1 + min(u_repel,2.0) * 0.12));
+  }
+  outColor = vec4(col, alpha);
+}`;
+
+const FISH_VS = `#version 300 es
+layout(location=0) in vec2 a_corner;
+layout(location=1) in vec2 a_offset;
+layout(location=2) in float a_angle;
+layout(location=3) in float a_size;
+layout(location=4) in float a_hue;
+layout(location=5) in float a_phase;
+uniform vec2 u_res;
+uniform vec2 u_center;
+uniform float u_zoom;
+uniform vec2 u_magCenter;
+uniform float u_mag;
+out vec2 v_local;
+out float v_hue;
+out float v_phase;
+out float v_apparent;
+void main(){
+  v_local = a_corner;
+  float c = cos(a_angle), s = sin(a_angle);
+  vec2 rot = vec2(a_corner.x*c - a_corner.y*s, a_corner.x*s + a_corner.y*c);
+  vec2 world = a_offset + rot * a_size;
+  vec2 screen = u_center + (world - u_center) * u_zoom;
+  screen = u_magCenter + (screen - u_magCenter) * u_mag;
+  vec2 ndc = vec2(screen.x / u_res.x * 2.0 - 1.0, 1.0 - screen.y / u_res.y * 2.0);
+  gl_Position = vec4(ndc, 0.0, 1.0);
+  v_hue = a_hue;
+  v_phase = a_phase;
+  v_apparent = a_size * u_zoom * u_mag;
+}`;
+
+const FISH_FS = `#version 300 es
+precision highp float;
+in vec2 v_local;
+in float v_hue;
+in float v_phase;
+in float v_apparent;
+uniform float u_lens;
+uniform vec2 u_lensCenter;
+uniform float u_lensR;
+out vec4 outColor;
+
+vec3 hsl2rgb(float h, float s, float l){
+  float c = (1.0 - abs(2.0*l - 1.0)) * s;
+  float hp = mod(h, 360.0) / 60.0;
+  float x = c * (1.0 - abs(mod(hp, 2.0) - 1.0));
+  vec3 rgb;
+  if (hp < 1.0) rgb = vec3(c,x,0.0);
+  else if (hp < 2.0) rgb = vec3(x,c,0.0);
+  else if (hp < 3.0) rgb = vec3(0.0,c,x);
+  else if (hp < 4.0) rgb = vec3(0.0,x,c);
+  else if (hp < 5.0) rgb = vec3(x,0.0,c);
+  else rgb = vec3(c,0.0,x);
+  return rgb + (l - c*0.5);
+}
+bool inPoly8(vec2 p, vec2 v[8]){
+  bool inside = false;
+  for (int i = 0; i < 8; i++){
+    int j = (i == 0) ? 7 : i - 1;
+    vec2 vi = v[i], vj = v[j];
+    if (((vi.y > p.y) != (vj.y > p.y)) &&
+        (p.x < (vj.x - vi.x) * (p.y - vi.y) / (vj.y - vi.y) + vi.x)) inside = !inside;
+  }
+  return inside;
+}
+bool inPoly4(vec2 p, vec2 v[4]){
+  bool inside = false;
+  for (int i = 0; i < 4; i++){
+    int j = (i == 0) ? 3 : i - 1;
+    vec2 vi = v[i], vj = v[j];
+    if (((vi.y > p.y) != (vj.y > p.y)) &&
+        (p.x < (vj.x - vi.x) * (p.y - vi.y) / (vj.y - vi.y) + vi.x)) inside = !inside;
+  }
+  return inside;
+}
+void main(){
+  if (u_lens > 0.5 && distance(gl_FragCoord.xy, u_lensCenter) > u_lensR) discard;
+  vec3 body = hsl2rgb(v_hue, 0.9, 0.65);
+  if (v_apparent < 2.5) { outColor = vec4(body, 0.9); return; }
+  vec2 p = v_local;
+  vec2 b[8];
+  b[0]=vec2(1.4,0.0); b[1]=vec2(0.64,0.329); b[2]=vec2(-0.053,0.496); b[3]=vec2(-0.7,0.5);
+  b[4]=vec2(-0.525,0.0); b[5]=vec2(-0.7,-0.5); b[6]=vec2(-0.053,-0.496); b[7]=vec2(0.64,-0.329);
+  if (inPoly8(p, b)) { outColor = vec4(body, 0.9); return; }
+  if (v_apparent >= 4.5) {
+    float tail = sin(v_phase) * 0.5;
+    vec2 t[4];
+    t[0]=vec2(-0.65,0.0); t[1]=vec2(-1.5+tail,0.55); t[2]=vec2(-1.15,0.0); t[3]=vec2(-1.5+tail,-0.55);
+    if (inPoly4(p, t)) { outColor = vec4(body, 0.9); return; }
+    if (distance(p, vec2(0.55,-0.14)) < 0.13) { outColor = vec4(0.90,0.96,1.0,0.95); return; }
+  }
+  discard;
+}`;
+
+const SNOW_VS = `#version 300 es
+layout(location=0) in vec2 a_pos;
+layout(location=1) in float a_size;
+layout(location=2) in float a_alpha;
+uniform vec2 u_res;
+uniform float u_dpr;
+out float v_alpha;
+void main(){
+  vec2 ndc = vec2(a_pos.x / u_res.x * 2.0 - 1.0, 1.0 - a_pos.y / u_res.y * 2.0);
+  gl_Position = vec4(ndc, 0.0, 1.0);
+  gl_PointSize = max(1.0, a_size * u_dpr * 2.0);
+  v_alpha = a_alpha;
+}`;
+
+const SNOW_FS = `#version 300 es
+precision highp float;
+in float v_alpha;
+out vec4 outColor;
+void main(){
+  vec2 d = gl_PointCoord - vec2(0.5);
+  float a = (1.0 - smoothstep(0.15, 0.5, length(d))) * v_alpha;
+  outColor = vec4(0.56, 0.816, 1.0, a);
+}`;
+
+/* ---------------- GL 资源 ---------------- */
+function compile(type, src) {
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh) + '\n' + src);
+  return sh;
+}
+function link(vsSrc, fsSrc) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vsSrc));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fsSrc));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+function U(p, names) { const o = { p }; for (const n of names) o[n] = gl.getUniformLocation(p, n); return o; }
+
+const fadeP = link(QUAD_VS, FADE_FS); const fadeU = U(fadeP, ['u_color']);
+const blitP = link(QUAD_VS, BLIT_FS); const blitU = U(blitP, ['u_tex']);
+const lensP = link(QUAD_VS, LENS_FS); const lensU = U(lensP, ['u_resDev', 'u_center', 'u_radius', 'u_isRing']);
+const fieldP = link(QUAD_VS, FIELD_FS); const fieldU = U(fieldP, ['u_resDev', 'u_center', 'u_radius', 'u_repelR', 'u_attract', 'u_repel']);
+const fishP = link(FISH_VS, FISH_FS); const fishU = U(fishP, ['u_res', 'u_center', 'u_zoom', 'u_magCenter', 'u_mag', 'u_lens', 'u_lensCenter', 'u_lensR']);
+const snowP = link(SNOW_VS, SNOW_FS); const snowU = U(snowP, ['u_res', 'u_dpr']);
+
+const quadVAO = gl.createVertexArray();
+{
+  const b = gl.createBuffer();
+  gl.bindVertexArray(quadVAO);
+  gl.bindBuffer(gl.ARRAY_BUFFER, b);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, 1,1, -1,-1, 1,1, -1,1]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.bindVertexArray(null);
+}
+
+const fishVAO = gl.createVertexArray();
+const instBuf = gl.createBuffer();
+let instData = new Float32Array(MAX_FISH * 6);
+{
+  const CORNERS = new Float32Array([-1.7,-0.7, 1.5,-0.7, 1.5,0.7, -1.7,-0.7, 1.5,0.7, -1.7,0.7]);
+  gl.bindVertexArray(fishVAO);
+  const cb = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, cb);
+  gl.bufferData(gl.ARRAY_BUFFER, CORNERS, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, MAX_FISH * 6 * 4, gl.DYNAMIC_DRAW);
+  const st = 6 * 4;
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, st, 0);  gl.vertexAttribDivisor(1, 1);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, st, 8);  gl.vertexAttribDivisor(2, 1);
+  gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, st, 12); gl.vertexAttribDivisor(3, 1);
+  gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 1, gl.FLOAT, false, st, 16); gl.vertexAttribDivisor(4, 1);
+  gl.enableVertexAttribArray(5); gl.vertexAttribPointer(5, 1, gl.FLOAT, false, st, 20); gl.vertexAttribDivisor(5, 1);
+  gl.bindVertexArray(null);
+}
+
+/* 海雪 */
+const snow = Array.from({ length: 70 }, () => ({
+  x: Math.random() * window.innerWidth, y: Math.random() * window.innerHeight,
+  r: Math.random() * 1.6 + 0.3, vy: Math.random() * 0.25 + 0.05, o: Math.random() * 0.3 + 0.05
+}));
+const snowData = new Float32Array(snow.length * 4);
+const snowVAO = gl.createVertexArray();
+const snowBuf = gl.createBuffer();
+{
+  gl.bindVertexArray(snowVAO);
+  gl.bindBuffer(gl.ARRAY_BUFFER, snowBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, snow.length * 4 * 4, gl.DYNAMIC_DRAW);
+  const st = 4 * 4;
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, st, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 1, gl.FLOAT, false, st, 8);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, st, 12);
+  gl.bindVertexArray(null);
+}
+
+/* FBO（拖尾累积） */
+let fbo, fboTex;
+function createFBO() {
+  if (fboTex) gl.deleteTexture(fboTex);
+  if (fbo) gl.deleteFramebuffer(fbo);
+  fboTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, fboTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fboTex, 0);
+  gl.clearColor(BG[0], BG[1], BG[2], 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = Math.floor(W * dpr);
+  canvas.height = Math.floor(H * dpr);
+  createFBO();
+  updateBounds();
+}
+
+/* GPU 计时（可选） */
+const timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+let gpuQuery = null, gpuPending = null, gpuMs = 0;
+
+/* ---------------- 渲染 ---------------- */
+let instCapacity = MAX_FISH;
+let instCount = 0;
+function ensureInst(n) {
+  if (n <= instCapacity) return;
+  instCapacity = Math.max(n, instCapacity * 2);
+  instData = new Float32Array(instCapacity * 6);
+  gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, instCapacity * 6 * 4, gl.DYNAMIC_DRAW);
+}
+
+function buildInstances() {
+  const n = fishCount();
+  const wrap = params.wrap;
+  const wW = bounds.right - bounds.left;
+  const wH = bounds.bottom - bounds.top;
+
+  // 循环模式下，靠近边界的鱼需要在对面补画副本，接口才无缝
+  let cap = n;
+  if (wrap) {
+    cap = 0;
+    for (let i = 0; i < n; i++) {
+      const e = sizes[i] * 2;
+      let kx = 1, ky = 1;
+      if (xs[i] - e < bounds.left || xs[i] + e > bounds.right) kx++;
+      if (ys[i] - e < bounds.top || ys[i] + e > bounds.bottom) ky++;
+      cap += kx * ky;
+    }
+  }
+  ensureInst(cap);
+
+  const d = instData;
+  let m = 0;
+  for (let i = 0; i < n; i++) {
+    const px = xs[i], py = ys[i], sz = sizes[i], hu = hues[i], ph = phases[i];
+    const ang = Math.atan2(vys[i], vxs[i]);
+    if (!wrap) {
+      d[m] = px; d[m + 1] = py; d[m + 2] = ang;
+      d[m + 3] = sz; d[m + 4] = hu; d[m + 5] = ph; m += 6;
+      continue;
+    }
+    const e = sz * 2;
+    let sx = 0, hasSx = false;
+    if (px - e < bounds.left) { sx = 1; hasSx = true; }
+    else if (px + e > bounds.right) { sx = -1; hasSx = true; }
+    let sy = 0, hasSy = false;
+    if (py - e < bounds.top) { sy = 1; hasSy = true; }
+    else if (py + e > bounds.bottom) { sy = -1; hasSy = true; }
+
+    // 本体
+    d[m] = px; d[m + 1] = py; d[m + 2] = ang; d[m + 3] = sz; d[m + 4] = hu; d[m + 5] = ph; m += 6;
+    if (hasSx) { d[m] = px + sx * wW; d[m + 1] = py; d[m + 2] = ang; d[m + 3] = sz; d[m + 4] = hu; d[m + 5] = ph; m += 6; }
+    if (hasSy) { d[m] = px; d[m + 1] = py + sy * wH; d[m + 2] = ang; d[m + 3] = sz; d[m + 4] = hu; d[m + 5] = ph; m += 6; }
+    if (hasSx && hasSy) { d[m] = px + sx * wW; d[m + 1] = py + sy * wH; d[m + 2] = ang; d[m + 3] = sz; d[m + 4] = hu; d[m + 5] = ph; m += 6; }
+  }
+  instCount = m / 6;
+}
+function updateSnow() {
+  for (let i = 0; i < snow.length; i++) {
+    const p = snow[i];
+    p.y += p.vy; if (p.y > H) { p.y = 0; p.x = Math.random() * W; }
+    const o = i * 4;
+    snowData[o] = p.x; snowData[o + 1] = p.y; snowData[o + 2] = p.r; snowData[o + 3] = p.o;
+  }
+}
+
+function drawFish(uMag, magCenterX, magCenterY, lensOn, lensCX, lensCY, lensR) {
+  gl.useProgram(fishP);
+  gl.uniform2f(fishU.u_res, W, H);
+  gl.uniform2f(fishU.u_center, W / 2, H / 2);
+  gl.uniform1f(fishU.u_zoom, params.zoom);
+  gl.uniform2f(fishU.u_magCenter, magCenterX, magCenterY);
+  gl.uniform1f(fishU.u_mag, uMag);
+  gl.uniform1f(fishU.u_lens, lensOn ? 1 : 0);
+  gl.uniform2f(fishU.u_lensCenter, lensCX || 0, lensCY || 0);
+  gl.uniform1f(fishU.u_lensR, lensR || 0);
+  gl.bindVertexArray(fishVAO);
+  gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, instData.subarray(0, instCount * 6));
+  gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, instCount);
+}
+
+function render() {
+  const s = dpr;
+  buildInstances();
+  updateSnow();
+
+  /* ---- 场景 → FBO（累积拖尾）---- */
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  gl.useProgram(fadeP);
+  gl.uniform4f(fadeU.u_color, BG[0], BG[1], BG[2], FADE_ALPHA);
+  gl.bindVertexArray(quadVAO);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  gl.useProgram(snowP);
+  gl.uniform2f(snowU.u_res, W, H);
+  gl.uniform1f(snowU.u_dpr, s);
+  gl.bindVertexArray(snowVAO);
+  gl.bindBuffer(gl.ARRAY_BUFFER, snowBuf);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, snowData);
+  gl.drawArrays(gl.POINTS, 0, snow.length);
+
+  if (mouse.active && params.mouseField) {
+    gl.useProgram(fieldP);
+    gl.uniform2f(fieldU.u_resDev, canvas.width, canvas.height);
+    gl.uniform2f(fieldU.u_center, mouse.sx * s, canvas.height - mouse.sy * s);
+    gl.uniform1f(fieldU.u_radius, params.mRadius * params.zoom * s);
+    gl.uniform1f(fieldU.u_repelR, MOUSE_REPEL_RADIUS * params.zoom * s);
+    gl.uniform1f(fieldU.u_attract, params.mAttract);
+    gl.uniform1f(fieldU.u_repel, params.mRepel);
+    gl.bindVertexArray(quadVAO);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  drawFish(1, 0, 0, false, 0, 0, 0);
+
+  /* ---- 呈现：FBO → 屏幕 ---- */
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.disable(gl.BLEND);
+  gl.useProgram(blitP);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, fboTex);
+  gl.uniform1i(blitU.u_tex, 0);
+  gl.bindVertexArray(quadVAO);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  /* ---- 放大镜 ---- */
+  if (mag.active && mouse.sx > -9998) {
+    const cx = mouse.sx * s, cyGL = canvas.height - mouse.sy * s, R = params.magRadius * s;
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    gl.useProgram(lensP);
+    gl.uniform2f(lensU.u_resDev, canvas.width, canvas.height);
+    gl.uniform2f(lensU.u_center, cx, cyGL);
+    gl.uniform1f(lensU.u_radius, R);
+    gl.uniform1f(lensU.u_isRing, 0);
+    gl.bindVertexArray(quadVAO);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    drawFish(params.magZoom, mouse.sx, mouse.sy, true, cx, cyGL, R);
+
+    gl.useProgram(lensP);
+    gl.uniform2f(lensU.u_resDev, canvas.width, canvas.height);
+    gl.uniform2f(lensU.u_center, cx, cyGL);
+    gl.uniform1f(lensU.u_radius, R);
+    gl.uniform1f(lensU.u_isRing, 1);
+    gl.bindVertexArray(quadVAO);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  /* ---- 画笔指示圈 ---- */
+  if (paint.enabled && mouse.sx > -9998) {
+    const cx = mouse.sx * s, cyGL = canvas.height - mouse.sy * s, R = paint.radius * params.zoom * s;
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(lensP);
+    gl.uniform2f(lensU.u_resDev, canvas.width, canvas.height);
+    gl.uniform2f(lensU.u_center, cx, cyGL);
+    gl.uniform1f(lensU.u_radius, R);
+    gl.uniform1f(lensU.u_isRing, 1);
+    gl.bindVertexArray(quadVAO);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+  gl.bindVertexArray(null);
+}
+
+/* ---------------- 主循环 ---------------- */
+function main() {
+  let fpsS = 60, updS = 0, submitS = 0, frameS = 0, frameCount = 0, lastT = performance.now();
+  function frame() {
+    const frameStart = performance.now();
+    const dt = frameStart - lastT; lastT = frameStart;
+    const realDt = Math.min(dt / 1000, MAX_DT);
+    if (dt > 0) fpsS = fpsS * 0.9 + (1000 / dt) * 0.1;
+
+    updateBounds();
+    if (mouse.sx > -9998) {
+      const w = screenToWorld(mouse.sx, mouse.sy);
+      mouse.x = w.x; mouse.y = w.y;
+    }
+
+    let updTotal = 0;
+    if (!paused) {
+      // 每帧固定 1 个 tick，dt = 真实流逝时间 × 倍速
+      const s0 = performance.now();
+      update(realDt * speedMul);
+      updTotal = performance.now() - s0;
+      simTime += realDt * speedMul;
+    }
+    updS = updS * 0.9 + updTotal * 0.1;
+    refreshViews();
+    applyPaint();
+
+    // GPU 计时查询：先读取上一帧结果，再开始这一帧
+    if (timerExt && gpuPending) {
+      if (gl.getQueryParameter(gpuPending, gl.QUERY_RESULT_AVAILABLE) &&
+          !gl.getParameter(timerExt.GPU_DISJOINT_EXT)) {
+        gpuMs = gpuMs * 0.8 + (gl.getQueryParameter(gpuPending, gl.QUERY_RESULT) / 1e6) * 0.2;
+        gl.deleteQuery(gpuPending); gpuPending = null;
+      }
+    }
+    if (timerExt && !gpuQuery && !gpuPending) {
+      gpuQuery = gl.createQuery();
+      gl.beginQuery(timerExt.TIME_ELAPSED_EXT, gpuQuery);
+    }
+
+    const tr = performance.now();
+    render();
+    submitS = submitS * 0.9 + (performance.now() - tr) * 0.1;
+
+    if (timerExt && gpuQuery) { gl.endQuery(timerExt.TIME_ELAPSED_EXT); gpuPending = gpuQuery; gpuQuery = null; }
+
+    frameS = frameS * 0.9 + (performance.now() - frameStart) * 0.1;
+
+    if ((frameCount++ % 10) === 0) {
+      const upd = paused ? '暂停' : updS.toFixed(2);
+      const gpu = timerExt ? gpuMs.toFixed(1) : '—';
+      const dtms = realDt * speedMul * 1000;
+      const mm = Math.floor(simTime / 60), ss = simTime - mm * 60;
+      const clock = mm + ':' + (ss < 10 ? '0' : '') + ss.toFixed(1);
+      wasm.sim_compute_stats();
+      refreshViews();   // 统计可能触发内存增长，重新建立视图后再读
+      diagEl.innerHTML =
+        `渲染 <b>${submitS.toFixed(1)}</b> · GPU <b>${gpu}</b> · update <b>${upd}</b> ms · 倍速 <b>×${speedMul}</b>` +
+        `<br>帧 <b>${frameS.toFixed(1)}</b> · 周期 <b>${(1000 / fpsS).toFixed(1)}</b> · fps <b>${Math.round(fpsS)}</b> · 鱼 <b>${fishCount()}</b>` +
+        `<br>逻辑时间 <b>${clock}</b> · tick dt <b>${dtms.toFixed(1)}</b> ms` +
+        `<br>格密度 前10/20/50 <b>${statsF32[0].toFixed(1)}</b>/<b>${statsF32[1].toFixed(1)}</b>/<b>${statsF32[2].toFixed(1)}</b> · 均 <b>${statsF32[4].toFixed(1)}</b> · 格数 <b>${statsF32[3].toFixed(0)}</b>`;
+    }
+    requestAnimationFrame(frame);
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+  applyCount();
+  frame();
+}
+
+/* ---------------- 加载内联 wasm 并启动 ---------------- */
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+WebAssembly.instantiate(b64ToBytes(window.SIM_WASM_B64), {}).then(res => {
+  wasm = res.instance.exports;
+  mem = wasm.memory;
+  wasm.sim_new();
+  refreshViews();
+  main();
+}).catch(err => { diagEl.textContent = 'WASM 加载失败：' + err; });
+
+/* ---------------- 滑条 ---------------- */
+function bind(id, valId, key, fmt) {
+  const s = document.getElementById(id);
+  const v = document.getElementById(valId);
+  const apply = () => {
+    params[key] = parseFloat(s.value);
+    v.textContent = fmt ? fmt(s.value) : s.value;
+  };
+  s.addEventListener('input', apply);
+  apply();
+}
+bind('sCohesion', 'vCohesion', 'cohesion', v => (+v).toFixed(2));
+bind('sSeparation', 'vSeparation', 'separation', v => (+v).toFixed(2));
+bind('sAlign', 'vAlign', 'align', v => (+v).toFixed(2));
+bind('sSpeed', 'vSpeed', 'speed', v => (+v).toFixed(2));
+bind('sWander', 'vWander', 'wander', v => (+v).toFixed(2));
+bind('sMAttract', 'vMAttract', 'mAttract', v => (+v).toFixed(2));
+bind('sMRepel', 'vMRepel', 'mRepel', v => (+v).toFixed(2));
+bind('sMRadius', 'vMRadius', 'mRadius', v => Math.round(v));
+bind('sMag', 'vMag', 'magZoom', v => (+v).toFixed(1) + '×');
+bind('sMagR', 'vMagR', 'magRadius', v => Math.round(v) + 'px');
+
+const cbMouse = document.getElementById('cbMouse');
+cbMouse.addEventListener('change', () => { params.mouseField = cbMouse.checked; });
+params.mouseField = cbMouse.checked;
+
+const cbWrap = document.getElementById('cbWrap');
+cbWrap.addEventListener('change', () => { params.wrap = cbWrap.checked; });
+params.wrap = cbWrap.checked;
+
+/* 画笔面板 */
+function rgbToHue(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  if (d === 0) return paint.hue;
+  let h;
+  if (max === r) h = ((g - b) / d) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h *= 60; if (h < 0) h += 360;
+  return h;
+}
+const cbPaint = document.getElementById('cbPaint');
+cbPaint.addEventListener('change', () => { paint.enabled = cbPaint.checked; });
+paint.enabled = cbPaint.checked;
+
+const paintColor = document.getElementById('paintColor');
+paintColor.addEventListener('input', () => { paint.hue = rgbToHue(paintColor.value); });
+paint.hue = rgbToHue(paintColor.value);
+
+const sBrush = document.getElementById('sBrush');
+const vBrush = document.getElementById('vBrush');
+function applyBrush() {
+  paint.radius = parseFloat(sBrush.value);
+  vBrush.textContent = paint.radius;
+}
+sBrush.addEventListener('input', applyBrush);
+applyBrush();
+
+/* 数量：指数均匀，slider 0..1000 → 30..5000 */
+const COUNT_MIN = 30, COUNT_MAX = 50000, COUNT_RATIO = COUNT_MAX / COUNT_MIN;
+const sCount = document.getElementById('sCount');
+const vCount = document.getElementById('vCount');
+function applyCount() {
+  const t = parseFloat(sCount.value) / 1000;
+  const target = Math.round(COUNT_MIN * Math.pow(COUNT_RATIO, t));
+  params.count = target;
+  vCount.textContent = target;
+  if (wasm) syncCount();
+}
+sCount.addEventListener('input', applyCount);
+applyCount();
+
+/* 缩放：指数均匀，slider 0..1000 → 0.05..2 */
+const ZOOM_MIN = 0.05, ZOOM_MAX = 2, ZOOM_RATIO = ZOOM_MAX / ZOOM_MIN;
+const sZoom = document.getElementById('sZoom');
+const vZoom = document.getElementById('vZoom');
+function applyZoom() {
+  const t = parseFloat(sZoom.value) / 1000;
+  const newZoom = ZOOM_MIN * Math.pow(ZOOM_RATIO, t);
+  const r = params.zoom / newZoom;
+  if (wasm) wasm.sim_rescale(W / 2, H / 2, r);   // 世界坐标随缩放反向等比缩放
+  params.zoom = newZoom;
+  vZoom.textContent = params.zoom.toFixed(2) + '×';
+}
+sZoom.addEventListener('input', applyZoom);
+applyZoom();
+
+})();
+</script>
+</body>
+</html>
