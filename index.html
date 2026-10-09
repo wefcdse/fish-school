@@ -993,10 +993,17 @@ function render() {
       const dtms = realDt * speedMul * 1000;
       const mm = Math.floor(simTime / 60), ss = simTime - mm * 60;
       const clock = mm + ':' + (ss < 10 ? '0' : '') + ss.toFixed(1);
+      const lens = [];
+      for (const b of neighborGrid.values()) lens.push(b.length);
+      lens.sort((a, b) => b - a);
+      const avgTop = k => { if (!lens.length) return 0; const m = Math.min(k, lens.length); let s = 0; for (let i = 0; i < m; i++) s += lens[i]; return s / m; };
+      const cells = lens.length;
+      const avgAll = cells ? fishes.length / cells : 0;
       diagEl.innerHTML =
         `渲染 <b>${submitS.toFixed(1)}</b> · GPU <b>${gpu}</b> · update <b>${upd}</b> ms · 倍速 <b>×${speedMul}</b>` +
         `<br>帧 <b>${frameS.toFixed(1)}</b> · 周期 <b>${(1000 / fpsS).toFixed(1)}</b> · fps <b>${Math.round(fpsS)}</b> · 鱼 <b>${fishes.length}</b>` +
-        `<br>逻辑时间 <b>${clock}</b> · tick dt <b>${dtms.toFixed(1)}</b> ms`;
+        `<br>逻辑时间 <b>${clock}</b> · tick dt <b>${dtms.toFixed(1)}</b> ms` +
+        `<br>格密度 前10/20/50 <b>${avgTop(10).toFixed(1)}</b>/<b>${avgTop(20).toFixed(1)}</b>/<b>${avgTop(50).toFixed(1)}</b> · 均 <b>${avgAll.toFixed(1)}</b> · 格数 <b>${cells}</b>`;
     }
     requestAnimationFrame(frame);
   }
