@@ -1,9 +1,6 @@
 // Boids 鱼群模拟 —— 迁移自 index.html 的 JS 逻辑
 // 无 wasm-bindgen：纯 C ABI + 导出 memory，便于内联 base64 直接实例化。
 
-use std::collections::HashMap;
-use std::hash::{BuildHasher, Hasher};
-
 const PERCEPTION: f32 = 60.0;
 const SEP_RADIUS: f32 = 22.0;
 const MOUSE_REPEL_RADIUS: f32 = 70.0;
@@ -13,39 +10,14 @@ const REF_TICKS: f32 = 60.0;
 const CELL_SIZE: f32 = PERCEPTION;
 const PARAM_LEN: usize = 24;
 
-/* ---------- 快速整数哈希，避免依赖随机种子 ---------- */
-#[derive(Default)]
-struct IdHasher(u64);
-impl Hasher for IdHasher {
-    fn finish(&self) -> u64 { self.0 }
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.0 = self.0.wrapping_mul(1099511628211).wrapping_add(b as u64);
-        }
-    }
-    fn write_i64(&mut self, x: i64) {
-        self.0 = (x as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    }
-    fn write_u64(&mut self, x: u64) {
-        self.0 = x.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    }
-}
-#[derive(Default, Clone)]
-struct BuildId;
-impl BuildHasher for BuildId {
-    type Hasher = IdHasher;
-    fn build_hasher(&self) -> IdHasher { IdHasher(0) }
-}
-
-type Grid = HashMap<i64, Vec<u32>, BuildId>;
-
 pub struct Sim {
     x: Vec<f32>, y: Vec<f32>, vx: Vec<f32>, vy: Vec<f32>,
     size: Vec<f32>, hue: Vec<f32>, phase: Vec<f32>, wander: Vec<f32>,
     accx: Vec<f32>, accy: Vec<f32>,
     gx: Vec<i32>, gy: Vec<i32>,
+    cell_idx: Vec<u32>, cell_start: Vec<u32>, cell_cursor: Vec<u32>, order: Vec<u32>,
+    last_ncells: usize,
     stat_lens: Vec<u32>,
-    grid: Grid,
     rng: u32,
 }
 
@@ -56,8 +28,9 @@ impl Sim {
             size: Vec::new(), hue: Vec::new(), phase: Vec::new(), wander: Vec::new(),
             accx: Vec::new(), accy: Vec::new(),
             gx: Vec::new(), gy: Vec::new(),
+            cell_idx: Vec::new(), cell_start: Vec::new(), cell_cursor: Vec::new(), order: Vec::new(),
+            last_ncells: 0,
             stat_lens: Vec::new(),
-            grid: Grid::default(),
             rng: 0x1234_5678,
         }
     }
@@ -159,30 +132,65 @@ impl Sim {
         let perception2 = PERCEPTION * PERCEPTION;
         let sep2 = SEP_RADIUS * SEP_RADIUS;
 
-        let mut cols = 0i32; let mut rows = 0i32;
-        let mut cw = CELL_SIZE; let mut ch = CELL_SIZE;
+        // 网格几何：统一到 cell 坐标 [0,cols)×[0,rows)
+        let (cols, rows, cw, ch, min_gx, min_gy);
         if wrap {
-            cols = ((ww / CELL_SIZE) as i32).max(3);
-            rows = ((wh / CELL_SIZE) as i32).max(3);
-            cw = ww / cols as f32; ch = wh / rows as f32;
+            let ci = ((ww / CELL_SIZE) as i32).max(3);
+            let ri = ((wh / CELL_SIZE) as i32).max(3);
+            cols = ci; rows = ri;
+            cw = ww / ci as f32; ch = wh / ri as f32;
+            min_gx = 0; min_gy = 0;
+        } else {
+            min_gx = (left / CELL_SIZE).floor() as i32;
+            min_gy = (top / CELL_SIZE).floor() as i32;
+            let max_gx = (right / CELL_SIZE).floor() as i32;
+            let max_gy = (bottom / CELL_SIZE).floor() as i32;
+            cols = (max_gx - min_gx + 1).max(1);
+            rows = (max_gy - min_gy + 1).max(1);
+            cw = CELL_SIZE; ch = CELL_SIZE;
         }
+        let cols_u = cols.max(1) as usize;
+        let rows_u = rows.max(1) as usize;
+        let ncells = cols_u * rows_u;
+        self.last_ncells = ncells;
 
-        // 构建邻居网格（复用桶）
-        {
-            let grid = &mut self.grid;
-            for b in grid.values_mut() { b.clear(); }
-        }
+        // 计算每条鱼的格号
+        if self.cell_idx.len() < n { self.cell_idx.resize(n, 0); }
+        if self.order.len() < n { self.order.resize(n, 0); }
+        if self.cell_start.len() < ncells + 1 { self.cell_start.resize(ncells + 1, 0); }
+        if self.cell_cursor.len() < ncells { self.cell_cursor.resize(ncells, 0); }
+
         for i in 0..n {
             let (gx, gy) = if wrap {
                 let gx0 = ((self.x[i] - left) / cw).floor() as i32;
                 let gy0 = ((self.y[i] - top) / ch).floor() as i32;
-                (((gx0 % cols) + cols) % cols, ((gy0 % rows) + rows) % rows)
+                (gx0.rem_euclid(cols), gy0.rem_euclid(rows))
             } else {
-                ((self.x[i] / CELL_SIZE).floor() as i32, (self.y[i] / CELL_SIZE).floor() as i32)
+                (
+                    ((self.x[i] / CELL_SIZE).floor() as i32 - min_gx).clamp(0, cols - 1),
+                    ((self.y[i] / CELL_SIZE).floor() as i32 - min_gy).clamp(0, rows - 1),
+                )
             };
             self.gx[i] = gx; self.gy[i] = gy;
-            let key = (gx as i64) * 100_000 + (gy as i64);
-            self.grid.entry(key).or_insert_with(Vec::new).push(i as u32);
+            self.cell_idx[i] = ((gy as usize) * cols_u + gx as usize) as u32;
+        }
+
+        // 计数排序：把鱼索引按格号排进连续数组（CSR）
+        for c in 0..=ncells { self.cell_start[c] = 0; }
+        for i in 0..n { self.cell_start[self.cell_idx[i] as usize] += 1; }
+        let mut running = 0u32;
+        for c in 0..ncells {
+            let cnt = self.cell_start[c];
+            self.cell_start[c] = running;
+            self.cell_cursor[c] = running;
+            running += cnt;
+        }
+        self.cell_start[ncells] = running;
+        for i in 0..n {
+            let c = self.cell_idx[i] as usize;
+            let pos = self.cell_cursor[c];
+            self.order[pos as usize] = i as u32;
+            self.cell_cursor[c] = pos + 1;
         }
 
         // 逐鱼求力（Jacobi：先全部算力，再统一积分）
@@ -195,31 +203,31 @@ impl Sim {
             let mut cnt = 0i32; let mut scnt = 0i32;
 
             for ox in -1..=1 {
+                let nx = gx + ox;
+                if !wrap && (nx < 0 || nx >= cols) { continue; }
+                let cx = if wrap { nx.rem_euclid(cols) } else { nx };
                 for oy in -1..=1 {
-                    let key = if wrap {
-                        let nx = (((gx + ox) % cols) + cols) % cols;
-                        let ny = (((gy + oy) % rows) + rows) % rows;
-                        (nx as i64) * 100_000 + (ny as i64)
-                    } else {
-                        ((gx + ox) as i64) * 100_000 + ((gy + oy) as i64)
-                    };
-                    if let Some(bucket) = self.grid.get(&key) {
-                        for &jj in bucket.iter() {
-                            let j = jj as usize;
-                            if j == i { continue; }
-                            let mut dx = self.x[j] - fx;
-                            let mut dy = self.y[j] - fy;
-                            if wrap {
-                                if dx > hw { dx -= ww; } else if dx < -hw { dx += ww; }
-                                if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
-                            }
-                            let d2 = dx * dx + dy * dy;
-                            if d2 > 0.0 && d2 < perception2 {
-                                cdx += dx; cdy += dy;
-                                avx += self.vx[j]; avy += self.vy[j];
-                                cnt += 1;
-                                if d2 < sep2 { sdx -= dx; sdy -= dy; scnt += 1; }
-                            }
+                    let ny = gy + oy;
+                    if !wrap && (ny < 0 || ny >= rows) { continue; }
+                    let cy = if wrap { ny.rem_euclid(rows) } else { ny };
+                    let c = (cy as usize) * cols_u + cx as usize;
+                    let s = self.cell_start[c] as usize;
+                    let e = self.cell_start[c + 1] as usize;
+                    for k in s..e {
+                        let j = self.order[k] as usize;
+                        if j == i { continue; }
+                        let mut dx = self.x[j] - fx;
+                        let mut dy = self.y[j] - fy;
+                        if wrap {
+                            if dx > hw { dx -= ww; } else if dx < -hw { dx += ww; }
+                            if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
+                        }
+                        let d2 = dx * dx + dy * dy;
+                        if d2 > 0.0 && d2 < perception2 {
+                            cdx += dx; cdy += dy;
+                            avx += self.vx[j]; avy += self.vy[j];
+                            cnt += 1;
+                            if d2 < sep2 { sdx -= dx; sdy -= dy; scnt += 1; }
                         }
                     }
                 }
@@ -384,8 +392,12 @@ static mut STATS: [f32; 8] = [0.0; 8];
 #[no_mangle]
 pub extern "C" fn sim_compute_stats() {
     let s = sim();
+    let ncells = s.last_ncells;
     s.stat_lens.clear();
-    s.stat_lens.extend(s.grid.values().map(|v| v.len() as u32));
+    for c in 0..ncells {
+        let cnt = s.cell_start[c + 1] - s.cell_start[c];
+        if cnt > 0 { s.stat_lens.push(cnt); }
+    }
     s.stat_lens.sort_unstable_by(|a, b| b.cmp(a));
     let lens = &s.stat_lens;
     let avg_top = |k: usize| -> f32 {
