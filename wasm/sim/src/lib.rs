@@ -103,6 +103,104 @@ unsafe fn proc_range(
     }
 }
 
+// 成对法：把一对 (a,b) 的贡献同时累加写到双方的标量累加数组（原始指针版，避免借用冲突）
+#[cfg(target_feature = "simd128")]
+#[inline]
+#[allow(clippy::too_many_arguments)]
+unsafe fn pair_add_raw(
+    a: usize, b: usize,
+    xp: *const f32, yp: *const f32, vxp: *const f32, vyp: *const f32,
+    cdx: *mut f32, cdy: *mut f32, avx: *mut f32, avy: *mut f32,
+    sdx: *mut f32, sdy: *mut f32, cnt: *mut i32, scnt: *mut i32,
+    wrap: bool, hw: f32, ww: f32, hh: f32, wh: f32, p2: f32, sep2: f32,
+) {
+    let xa = *xp.add(a); let ya = *yp.add(a); let vxa = *vxp.add(a); let vya = *vyp.add(a);
+    let mut dx = *xp.add(b) - xa;
+    let mut dy = *yp.add(b) - ya;
+    if wrap {
+        if dx > hw { dx -= ww; } else if dx < -hw { dx += ww; }
+        if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
+    }
+    let d2 = dx * dx + dy * dy;
+    if d2 > 0.0 && d2 < p2 {
+        *cdx.add(a) += dx; *cdy.add(a) += dy;
+        *cdx.add(b) -= dx; *cdy.add(b) -= dy;
+        *avx.add(a) += *vxp.add(b); *avy.add(a) += *vyp.add(b);
+        *avx.add(b) += vxa; *avy.add(b) += vya;
+        *cnt.add(a) += 1; *cnt.add(b) += 1;
+        if d2 < sep2 {
+            *sdx.add(a) -= dx; *sdy.add(a) -= dy;
+            *sdx.add(b) += dx; *sdy.add(b) += dy;
+            *scnt.add(a) += 1; *scnt.add(b) += 1;
+        }
+    }
+}
+
+// 分块成对：A 块（4 条，向量）逐条对 B 区间的每条鱼；A 侧向量累加，B 侧 hsum 写标量数组
+#[cfg(target_feature = "simd128")]
+#[inline]
+#[allow(clippy::too_many_arguments)]
+unsafe fn tile_cross(
+    a: usize, sb: usize, eb: usize,
+    xp: *const f32, yp: *const f32, vxp: *const f32, vyp: *const f32,
+    hwv: v128, wwv: v128, hhv: v128, whv: v128, nhwv: v128, nhhv: v128,
+    zv: v128, p2v: v128, sepv: v128, one: v128, wrap: bool,
+    av: &mut V8,
+    cdx: *mut f32, cdy: *mut f32, avx: *mut f32, avy: *mut f32,
+    sdx: *mut f32, sdy: *mut f32, cnt: *mut i32, scnt: *mut i32,
+) {
+    let xav = v128_load(xp.add(a) as *const v128);
+    let yav = v128_load(yp.add(a) as *const v128);
+    let vxav = v128_load(vxp.add(a) as *const v128);
+    let vyav = v128_load(vyp.add(a) as *const v128);
+    let mut cdxv = av.cdx; let mut cdyv = av.cdy;
+    let mut avxv = av.avx; let mut avyv = av.avy;
+    let mut sdxv = av.sdx; let mut sdyv = av.sdy;
+    let mut cntv = av.cnt; let mut scntv = av.scnt;
+    for m in sb..eb {
+        let mut dxv = f32x4_sub(f32x4_splat(*xp.add(m)), xav);
+        let mut dyv = f32x4_sub(f32x4_splat(*yp.add(m)), yav);
+        if wrap {
+            let gx = f32x4_gt(dxv, hwv);
+            let lx = f32x4_lt(dxv, nhwv);
+            let dxa = v128_bitselect(f32x4_sub(dxv, wwv), dxv, gx);
+            dxv = v128_bitselect(f32x4_add(dxa, wwv), dxa, lx);
+            let gy = f32x4_gt(dyv, hhv);
+            let ly = f32x4_lt(dyv, nhhv);
+            let dya = v128_bitselect(f32x4_sub(dyv, whv), dyv, gy);
+            dyv = v128_bitselect(f32x4_add(dya, whv), dya, ly);
+        }
+        let d2 = f32x4_add(f32x4_mul(dxv, dxv), f32x4_mul(dyv, dyv));
+        let mgt = f32x4_gt(d2, zv);
+        let m1 = v128_and(mgt, f32x4_lt(d2, p2v));
+        let dmx = v128_bitselect(dxv, zv, m1);
+        let dmy = v128_bitselect(dyv, zv, m1);
+        // A 侧（向量累加，4 条一起）
+        cdxv = f32x4_add(cdxv, dmx);
+        cdyv = f32x4_add(cdyv, dmy);
+        avxv = f32x4_add(avxv, v128_bitselect(f32x4_splat(*vxp.add(m)), zv, m1));
+        avyv = f32x4_add(avyv, v128_bitselect(f32x4_splat(*vyp.add(m)), zv, m1));
+        cntv = i32x4_add(cntv, v128_and(m1, one));
+        let m2 = v128_and(mgt, f32x4_lt(d2, sepv));
+        let smx = v128_bitselect(dxv, zv, m2);
+        let smy = v128_bitselect(dyv, zv, m2);
+        sdxv = f32x4_sub(sdxv, smx);
+        sdyv = f32x4_sub(sdyv, smy);
+        scntv = i32x4_add(scntv, v128_and(m2, one));
+        // B 侧（对 A 的 4 条做水平求和，写标量数组）
+        *cdx.add(m) -= hsum_f32(dmx);
+        *cdy.add(m) -= hsum_f32(dmy);
+        *avx.add(m) += hsum_f32(v128_bitselect(vxav, zv, m1));
+        *avy.add(m) += hsum_f32(v128_bitselect(vyav, zv, m1));
+        *sdx.add(m) += hsum_f32(smx);
+        *sdy.add(m) += hsum_f32(smy);
+        *cnt.add(m) += hsum_i32(v128_and(m1, one));
+        *scnt.add(m) += hsum_i32(v128_and(m2, one));
+    }
+    av.cdx = cdxv; av.cdy = cdyv; av.avx = avxv; av.avy = avyv;
+    av.sdx = sdxv; av.sdy = sdyv; av.cnt = cntv; av.scnt = scntv;
+}
+
 pub struct Sim {
     x: Vec<f32>, y: Vec<f32>, vx: Vec<f32>, vy: Vec<f32>,
     size: Vec<f32>, hue: Vec<f32>, phase: Vec<f32>, wander: Vec<f32>,
@@ -114,6 +212,9 @@ pub struct Sim {
     sgx: Vec<i32>, sgy: Vec<i32>,
     cell_idx: Vec<u32>, cell_start: Vec<u32>, cell_cursor: Vec<u32>, order: Vec<u32>,
     last_ncells: usize, last_cols: i32, last_rows: i32, last_cols_u: usize,
+    // 成对法的每鱼累加数组
+    cdx: Vec<f32>, cdy: Vec<f32>, avx: Vec<f32>, avy: Vec<f32>,
+    sdx: Vec<f32>, sdy: Vec<f32>, cnt: Vec<i32>, scnt: Vec<i32>,
     stat_lens: Vec<u32>,
     rng: u32,
 }
@@ -130,6 +231,8 @@ impl Sim {
             sgx: Vec::new(), sgy: Vec::new(),
             cell_idx: Vec::new(), cell_start: Vec::new(), cell_cursor: Vec::new(), order: Vec::new(),
             last_ncells: 0, last_cols: 0, last_rows: 0, last_cols_u: 0,
+            cdx: Vec::new(), cdy: Vec::new(), avx: Vec::new(), avy: Vec::new(),
+            sdx: Vec::new(), sdy: Vec::new(), cnt: Vec::new(), scnt: Vec::new(),
             stat_lens: Vec::new(),
             rng: 0x1234_5678,
         }
@@ -491,6 +594,281 @@ impl Sim {
         }
     }
 
+    // 处理一对 (a,b)：只算一次，双方都累加
+    #[inline]
+    fn pair_add(&mut self, a: usize, b: usize, wrap: bool, hw: f32, ww: f32, hh: f32, wh: f32, p2: f32, sep2: f32) {
+        let xa = self.x[a]; let ya = self.y[a]; let vxa = self.vx[a]; let vya = self.vy[a];
+        let mut dx = self.x[b] - xa;
+        let mut dy = self.y[b] - ya;
+        if wrap {
+            if dx > hw { dx -= ww; } else if dx < -hw { dx += ww; }
+            if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
+        }
+        let d2 = dx * dx + dy * dy;
+        if d2 > 0.0 && d2 < p2 {
+            self.cdx[a] += dx; self.cdy[a] += dy;
+            self.cdx[b] -= dx; self.cdy[b] -= dy;
+            self.avx[a] += self.vx[b]; self.avy[a] += self.vy[b];
+            self.avx[b] += vxa; self.avy[b] += vya;
+            self.cnt[a] += 1; self.cnt[b] += 1;
+            if d2 < sep2 {
+                self.sdx[a] -= dx; self.sdy[a] -= dy;
+                self.sdx[b] += dx; self.sdy[b] += dy;
+                self.scnt[a] += 1; self.scnt[b] += 1;
+            }
+        }
+    }
+
+    // 成对法（标量实验版）：每个无序对只算一次，双方都累加，再统一后处理
+    fn forces_pair(&mut self, dt: f32, p: &[f32; PARAM_LEN]) {
+        let n = self.x.len();
+        if n == 0 { return; }
+        let wrap = p[12] > 0.5;
+        let left = p[13]; let top = p[14]; let right = p[15]; let bottom = p[16];
+        let ww = right - left; let wh = bottom - top;
+        let hw = ww * 0.5; let hh = wh * 0.5;
+        let perception2 = PERCEPTION * PERCEPTION;
+        let sep2 = SEP_RADIUS * SEP_RADIUS;
+        let cols = self.last_cols; let rows = self.last_rows; let cols_u = self.last_cols_u;
+
+        self.cdx.resize(n, 0.0); self.cdy.resize(n, 0.0);
+        self.avx.resize(n, 0.0); self.avy.resize(n, 0.0);
+        self.sdx.resize(n, 0.0); self.sdy.resize(n, 0.0);
+        self.cnt.resize(n, 0); self.scnt.resize(n, 0);
+        self.cdx[..n].fill(0.0); self.cdy[..n].fill(0.0);
+        self.avx[..n].fill(0.0); self.avy[..n].fill(0.0);
+        self.sdx[..n].fill(0.0); self.sdy[..n].fill(0.0);
+        self.cnt[..n].fill(0); self.scnt[..n].fill(0);
+
+        let half: [(i32, i32); 4] = [(0, 1), (1, -1), (1, 0), (1, 1)];
+        for gy in 0..rows {
+            for gx in 0..cols {
+                let c = (gy as usize) * cols_u + gx as usize;
+                let s = self.cell_start[c] as usize;
+                let e = self.cell_start[c + 1] as usize;
+                // 同格内 a<b
+                let mut a = s;
+                while a < e {
+                    let mut b = a + 1;
+                    while b < e { self.pair_add(a, b, wrap, hw, ww, hh, wh, perception2, sep2); b += 1; }
+                    a += 1;
+                }
+                // 半邻域的 4 个方向（每个格对只访问一次）
+                for &(ox, oy) in half.iter() {
+                    let nx = gx + ox; let ny = gy + oy;
+                    let (cx, cy) = if wrap {
+                        (nx.rem_euclid(cols), ny.rem_euclid(rows))
+                    } else if nx < 0 || nx >= cols || ny < 0 || ny >= rows {
+                        continue;
+                    } else {
+                        (nx, ny)
+                    };
+                    let c2 = (cy as usize) * cols_u + cx as usize;
+                    let s2 = self.cell_start[c2] as usize;
+                    let e2 = self.cell_start[c2 + 1] as usize;
+                    let mut ii = s;
+                    while ii < e {
+                        let mut jj = s2;
+                        while jj < e2 { self.pair_add(ii, jj, wrap, hw, ww, hh, wh, perception2, sep2); jj += 1; }
+                        ii += 1;
+                    }
+                }
+            }
+        }
+
+        self.post_process(dt, p);
+    }
+
+    // 后处理：由每鱼累加数组算出 accx/accy（含 wander/鼠标/驱散）
+    fn post_process(&mut self, dt: f32, p: &[f32; PARAM_LEN]) {
+        let n = self.x.len();
+        if n == 0 { return; }
+        let nstep = dt * REF_TICKS;
+        let cohesion = p[0]; let separation = p[1]; let align = p[2];
+        let mouse_field = p[4] > 0.5;
+        let mx = p[5]; let my = p[6]; let mradius = p[7]; let mattract = p[8]; let mrepel = p[9];
+        let left_down = p[10] > 0.5; let scatter_f = p[11];
+        let wrap = p[12] > 0.5;
+        let left = p[13]; let top = p[14]; let right = p[15]; let bottom = p[16];
+        let wander_scale = p[18];
+        let ww = right - left; let wh = bottom - top;
+        let hw = ww * 0.5; let hh = wh * 0.5;
+        for i in 0..n {
+            let fx = self.x[i]; let fy = self.y[i];
+            let cdx = self.cdx[i]; let cdy = self.cdy[i];
+            let avx = self.avx[i]; let avy = self.avy[i];
+            let sdx = self.sdx[i]; let sdy = self.sdy[i];
+            let cnt = self.cnt[i]; let scnt = self.scnt[i];
+            let mut accx = 0.0f32; let mut accy = 0.0f32;
+            if cnt > 0 {
+                let nf = cnt as f32;
+                let tx = cdx / nf; let ty = cdy / nf;
+                let td = (tx * tx + ty * ty).sqrt().max(1e-6);
+                accx += tx / td * cohesion * 0.32;
+                accy += ty / td * cohesion * 0.32;
+                let nvx = avx / nf; let nvy = avy / nf;
+                let ad = (nvx * nvx + nvy * nvy).sqrt().max(1e-6);
+                accx += nvx / ad * align * 0.10;
+                accy += nvy / ad * align * 0.10;
+            }
+            if scnt > 0 {
+                let sd = (sdx * sdx + sdy * sdy).sqrt().max(1e-6);
+                accx += sdx / sd * separation * 0.35;
+                accy += sdy / sd * separation * 0.35;
+            }
+            let dw = (self.rand() - 0.5) * 0.5 * nstep;
+            self.wander[i] += dw;
+            accx += self.wander[i].cos() * 0.02 * wander_scale;
+            accy += self.wander[i].sin() * 0.02 * wander_scale;
+            if mouse_field {
+                let mut dx = mx - fx; let mut dy = my - fy;
+                if wrap {
+                    if dx > hw { dx -= ww; } else if dx < -hw { dx += ww; }
+                    if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
+                }
+                let d = (dx * dx + dy * dy).sqrt().max(1e-6);
+                if d < mradius {
+                    let pull = (1.0 - d / mradius) * mattract;
+                    accx += dx / d * pull; accy += dy / d * pull;
+                }
+                if d < MOUSE_REPEL_RADIUS {
+                    let push = (1.0 - d / MOUSE_REPEL_RADIUS) * mrepel;
+                    accx -= dx / d * push; accy -= dy / d * push;
+                }
+            }
+            if left_down {
+                let mut dx = fx - mx; let mut dy = fy - my;
+                if wrap {
+                    if dx > hw { dx -= ww; } else if dx < -hw { dx += ww; }
+                    if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
+                }
+                let d = (dx * dx + dy * dy).sqrt().max(1e-6);
+                let pp = (1.0 - d / SCATTER_RADIUS).max(0.0);
+                accx += dx / d * pp * scatter_f;
+                accy += dy / d * pp * scatter_f;
+            }
+            self.accx[i] = accx;
+            self.accy[i] = accy;
+        }
+    }
+
+    // 成对法（SIMD 分块实验版）：交叉格用 4×4 分块向量化，同格内用标量三角
+    #[cfg(target_feature = "simd128")]
+    fn forces_pair_simd(&mut self, dt: f32, p: &[f32; PARAM_LEN]) {
+        let n = self.x.len();
+        if n == 0 { return; }
+        let wrap = p[12] > 0.5;
+        let left = p[13]; let top = p[14]; let right = p[15]; let bottom = p[16];
+        let ww = right - left; let wh = bottom - top;
+        let hw = ww * 0.5; let hh = wh * 0.5;
+        let perception2 = PERCEPTION * PERCEPTION;
+        let sep2 = SEP_RADIUS * SEP_RADIUS;
+        let cols = self.last_cols; let rows = self.last_rows; let cols_u = self.last_cols_u;
+
+        self.cdx.resize(n, 0.0); self.cdy.resize(n, 0.0);
+        self.avx.resize(n, 0.0); self.avy.resize(n, 0.0);
+        self.sdx.resize(n, 0.0); self.sdy.resize(n, 0.0);
+        self.cnt.resize(n, 0); self.scnt.resize(n, 0);
+        self.cdx[..n].fill(0.0); self.cdy[..n].fill(0.0);
+        self.avx[..n].fill(0.0); self.avy[..n].fill(0.0);
+        self.sdx[..n].fill(0.0); self.sdy[..n].fill(0.0);
+        self.cnt[..n].fill(0); self.scnt[..n].fill(0);
+
+        let half: [(i32, i32); 4] = [(0, 1), (1, -1), (1, 0), (1, 1)];
+        unsafe {
+            let hwv = f32x4_splat(hw); let wwv = f32x4_splat(ww);
+            let hhv = f32x4_splat(hh); let whv = f32x4_splat(wh);
+            let nhwv = f32x4_splat(-hw); let nhhv = f32x4_splat(-hh);
+            let zv = f32x4_splat(0.0);
+            let p2v = f32x4_splat(perception2); let sepv = f32x4_splat(sep2);
+            let one = i32x4_splat(1);
+
+            let xp = self.x.as_ptr(); let yp = self.y.as_ptr();
+            let vxp = self.vx.as_ptr(); let vyp = self.vy.as_ptr();
+            let cdx = self.cdx.as_mut_ptr(); let cdy = self.cdy.as_mut_ptr();
+            let avx = self.avx.as_mut_ptr(); let avy = self.avy.as_mut_ptr();
+            let sdx = self.sdx.as_mut_ptr(); let sdy = self.sdy.as_mut_ptr();
+            let cnt = self.cnt.as_mut_ptr(); let scnt = self.scnt.as_mut_ptr();
+
+            for gy in 0..rows {
+                for gx in 0..cols {
+                    let c = (gy as usize) * cols_u + gx as usize;
+                    let s = self.cell_start[c] as usize;
+                    let e = self.cell_start[c + 1] as usize;
+                    // 同格内（标量三角 a<b）
+                    let mut i = s;
+                    while i < e {
+                        let mut j = i + 1;
+                        while j < e {
+                            pair_add_raw(i, j, xp, yp, vxp, vyp, cdx, cdy, avx, avy, sdx, sdy, cnt, scnt, wrap, hw, ww, hh, wh, perception2, sep2);
+                            j += 1;
+                        }
+                        i += 1;
+                    }
+                    // 预先解析 4 个半邻单格的区间
+                    let mut nbrs = [(0usize, 0usize); 4]; let mut nn = 0usize;
+                    for &(ox, oy) in half.iter() {
+                        let nx = gx + ox; let ny = gy + oy;
+                        let (cx, cy) = if wrap {
+                            (nx.rem_euclid(cols), ny.rem_euclid(rows))
+                        } else if nx < 0 || nx >= cols || ny < 0 || ny >= rows {
+                            continue;
+                        } else { (nx, ny) };
+                        let c2 = (cy as usize) * cols_u + cx as usize;
+                        nbrs[nn] = (self.cell_start[c2] as usize, self.cell_start[c2 + 1] as usize);
+                        nn += 1;
+                    }
+                    // 交叉格：A 整块(4) 向量累加
+                    let mut a = s;
+                    while a + 4 <= e {
+                        let mut av = V8 {
+                            cdx: v128_load(cdx.add(a) as *const v128),
+                            cdy: v128_load(cdy.add(a) as *const v128),
+                            avx: v128_load(avx.add(a) as *const v128),
+                            avy: v128_load(avy.add(a) as *const v128),
+                            sdx: v128_load(sdx.add(a) as *const v128),
+                            sdy: v128_load(sdy.add(a) as *const v128),
+                            cnt: v128_load(cnt.add(a) as *const v128),
+                            scnt: v128_load(scnt.add(a) as *const v128),
+                        };
+                        for k in 0..nn {
+                            let (s2, e2) = nbrs[k];
+                            if s2 == e2 { continue; }
+                            tile_cross(a, s2, e2, xp, yp, vxp, vyp, hwv, wwv, hhv, whv, nhwv, nhhv, zv, p2v, sepv, one, wrap, &mut av, cdx, cdy, avx, avy, sdx, sdy, cnt, scnt);
+                        }
+                        v128_store(cdx.add(a) as *mut v128, av.cdx);
+                        v128_store(cdy.add(a) as *mut v128, av.cdy);
+                        v128_store(avx.add(a) as *mut v128, av.avx);
+                        v128_store(avy.add(a) as *mut v128, av.avy);
+                        v128_store(sdx.add(a) as *mut v128, av.sdx);
+                        v128_store(sdy.add(a) as *mut v128, av.sdy);
+                        v128_store(cnt.add(a) as *mut v128, av.cnt);
+                        v128_store(scnt.add(a) as *mut v128, av.scnt);
+                        a += 4;
+                    }
+                    // A 尾巴
+                    while a < e {
+                        for k in 0..nn {
+                            let (s2, e2) = nbrs[k];
+                            let mut m = s2;
+                            while m < e2 {
+                                pair_add_raw(a, m, xp, yp, vxp, vyp, cdx, cdy, avx, avy, sdx, sdy, cnt, scnt, wrap, hw, ww, hh, wh, perception2, sep2);
+                                m += 1;
+                            }
+                        }
+                        a += 1;
+                    }
+                }
+            }
+        }
+        self.post_process(dt, p);
+    }
+
+    #[cfg(not(target_feature = "simd128"))]
+    fn forces_pair_simd(&mut self, dt: f32, p: &[f32; PARAM_LEN]) {
+        self.forces_pair(dt, p);
+    }
+
     // 阶段三：积分 + 边界
     fn integrate(&mut self, dt: f32, p: &[f32; PARAM_LEN]) {
         let n = self.x.len();
@@ -583,6 +961,10 @@ pub extern "C" fn sim_update(dt: f32) { sim().step(dt, params()); }
 pub extern "C" fn sim_phase_build() { sim().build(params()); }
 #[no_mangle]
 pub extern "C" fn sim_phase_forces(dt: f32) { sim().forces(dt, params()); }
+#[no_mangle]
+pub extern "C" fn sim_phase_forces_pair(dt: f32) { sim().forces_pair(dt, params()); }
+#[no_mangle]
+pub extern "C" fn sim_phase_forces_pair_simd(dt: f32) { sim().forces_pair_simd(dt, params()); }
 #[no_mangle]
 pub extern "C" fn sim_phase_integrate(dt: f32) { sim().integrate(dt, params()); }
 
