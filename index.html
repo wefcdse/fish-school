@@ -109,6 +109,8 @@
     <input type="range" id="sAlign" min="0" max="2" step="0.01" value="1.0"></label>
   <label>速度 <span class="val" id="vSpeed"></span>
     <input type="range" id="sSpeed" min="0.4" max="3" step="0.05" value="1.4"></label>
+  <label>扰动 <span class="val" id="vWander"></span>
+    <input type="range" id="sWander" min="0" max="5" step="0.05" value="1"></label>
 
   <div class="divider"><span>鼠标力场</span></div>
   <label class="chk"><input type="checkbox" id="cbMouse"> 启用鼠标力场</label>
@@ -165,6 +167,7 @@ const params = {
   separation: 1.4,
   align: 1.0,
   speed: 1.4,
+  wander: 1.0,
   mAttract: 0.5,
   mRepel: 0.8,
   mRadius: 320,
@@ -228,6 +231,7 @@ function fillParams() {
   paramsF32[12] = params.wrap ? 1 : 0;
   paramsF32[13] = b.left; paramsF32[14] = b.top; paramsF32[15] = b.right; paramsF32[16] = b.bottom;
   paramsF32[17] = params.zoom;
+  paramsF32[18] = params.wander;
 }
 
 // 按当前数量与边界生成鱼（首次 / 改数量）
@@ -880,6 +884,7 @@ bind('sCohesion', 'vCohesion', 'cohesion', v => (+v).toFixed(2));
 bind('sSeparation', 'vSeparation', 'separation', v => (+v).toFixed(2));
 bind('sAlign', 'vAlign', 'align', v => (+v).toFixed(2));
 bind('sSpeed', 'vSpeed', 'speed', v => (+v).toFixed(2));
+bind('sWander', 'vWander', 'wander', v => (+v).toFixed(2));
 bind('sMAttract', 'vMAttract', 'mAttract', v => (+v).toFixed(2));
 bind('sMRepel', 'vMRepel', 'mRepel', v => (+v).toFixed(2));
 bind('sMRadius', 'vMRadius', 'mRadius', v => Math.round(v));

@@ -150,6 +150,7 @@ impl Sim {
         let wrap = p[12] > 0.5;
         let left = p[13]; let top = p[14]; let right = p[15]; let bottom = p[16];
         let zoom = p[17];
+        let wander_scale = p[18];
         let ww = right - left; let wh = bottom - top;
         let hw = ww * 0.5; let hh = wh * 0.5;
 
@@ -242,8 +243,8 @@ impl Sim {
 
             let dw = (self.rand() - 0.5) * 0.5 * nstep;
             self.wander[i] += dw;
-            accx += self.wander[i].cos() * 0.02;
-            accy += self.wander[i].sin() * 0.02;
+            accx += self.wander[i].cos() * 0.02 * wander_scale;
+            accy += self.wander[i].sin() * 0.02 * wander_scale;
 
             if mouse_field {
                 let mut dx = mx - fx; let mut dy = my - fy;
