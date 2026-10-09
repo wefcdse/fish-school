@@ -32,28 +32,27 @@ unsafe fn hsum_i32(v: v128) -> i32 {
         + i32x4_extract_lane::<2>(v) + i32x4_extract_lane::<3>(v)
 }
 
-// 处理邻格区间 [s,e)，把凝聚/对齐/分离的累加值并入 acc
+// 一组 8 个向量累加器（凝聚/对齐/分离 + 计数）
+#[cfg(target_feature = "simd128")]
+#[derive(Clone, Copy)]
+struct V8 { cdx: v128, cdy: v128, avx: v128, avy: v128, sdx: v128, sdy: v128, cnt: v128, scnt: v128 }
+
+// 处理邻格区间 [s,e)：向量主体累加进 v，标量尾巴累加进 tail（hsum 由调用方每鱼只做一次）
 #[cfg(target_feature = "simd128")]
 #[inline]
-unsafe fn accum_range(
-    xp: *const f32, yp: *const f32, vxp: *const f32, vyp: *const f32,
+#[allow(clippy::too_many_arguments)]
+unsafe fn proc_range(
     s: usize, e: usize,
-    fx: f32, fy: f32, hw: f32, ww: f32, hh: f32, wh: f32,
-    perception2: f32, sep2: f32, wrap: bool,
-    acc: &mut Acc,
+    xp: *const f32, yp: *const f32, vxp: *const f32, vyp: *const f32,
+    fxv: v128, fyv: v128, hwv: v128, wwv: v128, hhv: v128, whv: v128,
+    nhwv: v128, nhhv: v128, zv: v128, p2v: v128, sepv: v128, one: v128, wrap: bool,
+    v: &mut V8, tail: &mut Acc,
+    fx: f32, fy: f32, hw: f32, ww: f32, hh: f32, wh: f32, perception2: f32, sep2: f32,
 ) {
-    let fxv = f32x4_splat(fx); let fyv = f32x4_splat(fy);
-    let hwv = f32x4_splat(hw); let wwv = f32x4_splat(ww);
-    let hhv = f32x4_splat(hh); let whv = f32x4_splat(wh);
-    let nhwv = f32x4_splat(-hw); let nhhv = f32x4_splat(-hh);
-    let zv = f32x4_splat(0.0);
-    let p2v = f32x4_splat(perception2); let sepv = f32x4_splat(sep2);
-    let one = i32x4_splat(1);
-
-    let mut cdxv = zv; let mut cdyv = zv;
-    let mut avxv = zv; let mut avyv = zv;
-    let mut sdxv = zv; let mut sdyv = zv;
-    let mut cntv = i32x4_splat(0); let mut scntv = i32x4_splat(0);
+    let mut cdxv = v.cdx; let mut cdyv = v.cdy;
+    let mut avxv = v.avx; let mut avyv = v.avy;
+    let mut sdxv = v.sdx; let mut sdyv = v.sdy;
+    let mut cntv = v.cnt; let mut scntv = v.scnt;
 
     let mut k = s;
     while k + 4 <= e {
@@ -83,10 +82,8 @@ unsafe fn accum_range(
         scntv = i32x4_add(scntv, v128_and(ms, one));
         k += 4;
     }
-    acc.cdx += hsum_f32(cdxv); acc.cdy += hsum_f32(cdyv);
-    acc.avx += hsum_f32(avxv); acc.avy += hsum_f32(avyv);
-    acc.sdx += hsum_f32(sdxv); acc.sdy += hsum_f32(sdyv);
-    acc.cnt += hsum_i32(cntv); acc.scnt += hsum_i32(scntv);
+    v.cdx = cdxv; v.cdy = cdyv; v.avx = avxv; v.avy = avyv;
+    v.sdx = sdxv; v.sdy = sdyv; v.cnt = cntv; v.scnt = scntv;
 
     while k < e {
         let mut dx = *xp.add(k) - fx;
@@ -97,38 +94,10 @@ unsafe fn accum_range(
         }
         let d2 = dx * dx + dy * dy;
         if d2 > 0.0 && d2 < perception2 {
-            acc.cdx += dx; acc.cdy += dy;
-            acc.avx += *vxp.add(k); acc.avy += *vyp.add(k);
-            acc.cnt += 1;
-            if d2 < sep2 { acc.sdx -= dx; acc.sdy -= dy; acc.scnt += 1; }
-        }
-        k += 1;
-    }
-}
-
-#[cfg(not(target_feature = "simd128"))]
-#[inline]
-unsafe fn accum_range(
-    xp: *const f32, yp: *const f32, vxp: *const f32, vyp: *const f32,
-    s: usize, e: usize,
-    fx: f32, fy: f32, hw: f32, ww: f32, hh: f32, wh: f32,
-    perception2: f32, sep2: f32, wrap: bool,
-    acc: &mut Acc,
-) {
-    let mut k = s;
-    while k < e {
-        let mut dx = *xp.add(k) - fx;
-        let mut dy = *yp.add(k) - fy;
-        if wrap {
-            if dx > hw { dx -= ww; } else if dx < -hw { dx += ww; }
-            if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
-        }
-        let d2 = dx * dx + dy * dy;
-        if d2 > 0.0 && d2 < perception2 {
-            acc.cdx += dx; acc.cdy += dy;
-            acc.avx += *vxp.add(k); acc.avy += *vyp.add(k);
-            acc.cnt += 1;
-            if d2 < sep2 { acc.sdx -= dx; acc.sdy -= dy; acc.scnt += 1; }
+            tail.cdx += dx; tail.cdy += dy;
+            tail.avx += *vxp.add(k); tail.avy += *vyp.add(k);
+            tail.cnt += 1;
+            if d2 < sep2 { tail.sdx -= dx; tail.sdy -= dy; tail.scnt += 1; }
         }
         k += 1;
     }
@@ -144,7 +113,7 @@ pub struct Sim {
     ssize: Vec<f32>, shue: Vec<f32>, sphase: Vec<f32>, swander: Vec<f32>,
     sgx: Vec<i32>, sgy: Vec<i32>,
     cell_idx: Vec<u32>, cell_start: Vec<u32>, cell_cursor: Vec<u32>, order: Vec<u32>,
-    last_ncells: usize,
+    last_ncells: usize, last_cols: i32, last_rows: i32, last_cols_u: usize,
     stat_lens: Vec<u32>,
     rng: u32,
 }
@@ -160,7 +129,7 @@ impl Sim {
             ssize: Vec::new(), shue: Vec::new(), sphase: Vec::new(), swander: Vec::new(),
             sgx: Vec::new(), sgy: Vec::new(),
             cell_idx: Vec::new(), cell_start: Vec::new(), cell_cursor: Vec::new(), order: Vec::new(),
-            last_ncells: 0,
+            last_ncells: 0, last_cols: 0, last_rows: 0, last_cols_u: 0,
             stat_lens: Vec::new(),
             rng: 0x1234_5678,
         }
@@ -244,24 +213,13 @@ impl Sim {
         }
     }
 
-    fn step(&mut self, dt: f32, p: &[f32; PARAM_LEN]) {
+    // 阶段一：建网格（计格号 + 计数排序 + 按格重排）
+    fn build(&mut self, p: &[f32; PARAM_LEN]) {
         let n = self.x.len();
         if n == 0 { return; }
-        let nstep = dt * REF_TICKS;
-
-        let cohesion = p[0]; let separation = p[1]; let align = p[2]; let speed = p[3];
-        let mouse_field = p[4] > 0.5;
-        let mx = p[5]; let my = p[6]; let mradius = p[7]; let mattract = p[8]; let mrepel = p[9];
-        let left_down = p[10] > 0.5; let scatter_f = p[11];
         let wrap = p[12] > 0.5;
         let left = p[13]; let top = p[14]; let right = p[15]; let bottom = p[16];
-        let zoom = p[17];
-        let wander_scale = p[18];
         let ww = right - left; let wh = bottom - top;
-        let hw = ww * 0.5; let hh = wh * 0.5;
-
-        let perception2 = PERCEPTION * PERCEPTION;
-        let sep2 = SEP_RADIUS * SEP_RADIUS;
 
         // 网格几何：统一到 cell 坐标 [0,cols)×[0,rows)
         let (cols, rows, cw, ch, min_gx, min_gy);
@@ -284,6 +242,7 @@ impl Sim {
         let rows_u = rows.max(1) as usize;
         let ncells = cols_u * rows_u;
         self.last_ncells = ncells;
+        self.last_cols = cols; self.last_rows = rows; self.last_cols_u = cols_u;
 
         // 计算每条鱼的格号
         if self.cell_idx.len() < n { self.cell_idx.resize(n, 0); }
@@ -353,37 +312,119 @@ impl Sim {
         std::mem::swap(&mut self.wander, &mut self.swander);
         std::mem::swap(&mut self.gx, &mut self.sgx);
         std::mem::swap(&mut self.gy, &mut self.sgy);
+    }
 
-        // 逐鱼求力（Jacobi：先全部算力，再统一积分）
-        for i in 0..n {
-            let fx = self.x[i]; let fy = self.y[i];
-            let gx = self.gx[i]; let gy = self.gy[i];
-            let mut acc = Acc::default();
+    // 阶段二：逐鱼求力（Jacobi：先全部算力，再统一积分）→ accx/accy
+    // 单条鱼的邻居累加：每条鱼只 splat 一次、累加进同一组向量、最后只 hsum 一次
+    #[cfg(target_feature = "simd128")]
+    fn accum_fish(&self, i: usize, cols: i32, rows: i32, cols_u: usize, wrap: bool,
+                  hw: f32, ww: f32, hh: f32, wh: f32, perception2: f32, sep2: f32) -> Acc {
+        let fx = self.x[i]; let fy = self.y[i];
+        let gx = self.gx[i]; let gy = self.gy[i];
+        let xc0 = if wrap { if gx == 0 { cols - 1 } else { gx - 1 } } else { gx - 1 };
+        let xc2 = if wrap { if gx == cols - 1 { 0 } else { gx + 1 } } else { gx + 1 };
+        let yc0 = if wrap { if gy == 0 { rows - 1 } else { gy - 1 } } else { gy - 1 };
+        let yc2 = if wrap { if gy == rows - 1 { 0 } else { gy + 1 } } else { gy + 1 };
+        let xcs = [xc0, gx, xc2];
+        let ycs = [yc0, gy, yc2];
+        unsafe {
+            let fxv = f32x4_splat(fx); let fyv = f32x4_splat(fy);
+            let hwv = f32x4_splat(hw); let wwv = f32x4_splat(ww);
+            let hhv = f32x4_splat(hh); let whv = f32x4_splat(wh);
+            let nhwv = f32x4_splat(-hw); let nhhv = f32x4_splat(-hh);
+            let zv = f32x4_splat(0.0);
+            let p2v = f32x4_splat(perception2); let sepv = f32x4_splat(sep2);
+            let one = i32x4_splat(1);
+            let mut v = V8 { cdx: zv, cdy: zv, avx: zv, avy: zv, sdx: zv, sdy: zv, cnt: i32x4_splat(0), scnt: i32x4_splat(0) };
+            let mut tail = Acc::default();
+            let xp = self.x.as_ptr(); let yp = self.y.as_ptr();
+            let vxp = self.vx.as_ptr(); let vyp = self.vy.as_ptr();
+            for &cx in xcs.iter() {
+                if cx < 0 || cx >= cols { continue; }
+                let cxb = cx as usize;
+                for &cy in ycs.iter() {
+                    if cy < 0 || cy >= rows { continue; }
+                    let c = cy as usize * cols_u + cxb;
+                    let s = self.cell_start[c] as usize;
+                    let e = self.cell_start[c + 1] as usize;
+                    if s == e { continue; }
+                    proc_range(s, e, xp, yp, vxp, vyp, fxv, fyv, hwv, wwv, hhv, whv, nhwv, nhhv, zv, p2v, sepv, one, wrap, &mut v, &mut tail, fx, fy, hw, ww, hh, wh, perception2, sep2);
+                }
+            }
+            Acc {
+                cdx: hsum_f32(v.cdx) + tail.cdx,
+                cdy: hsum_f32(v.cdy) + tail.cdy,
+                avx: hsum_f32(v.avx) + tail.avx,
+                avy: hsum_f32(v.avy) + tail.avy,
+                sdx: hsum_f32(v.sdx) + tail.sdx,
+                sdy: hsum_f32(v.sdy) + tail.sdy,
+                cnt: hsum_i32(v.cnt) + tail.cnt,
+                scnt: hsum_i32(v.scnt) + tail.scnt,
+            }
+        }
+    }
 
-            // 邻格列/行索引：wrap 用条件回绕（无整数除法），非 wrap 用 -1 表示越界
-            let xc0 = if wrap { if gx == 0 { cols - 1 } else { gx - 1 } } else { gx - 1 };
-            let xc2 = if wrap { if gx == cols - 1 { 0 } else { gx + 1 } } else { gx + 1 };
-            let yc0 = if wrap { if gy == 0 { rows - 1 } else { gy - 1 } } else { gy - 1 };
-            let yc2 = if wrap { if gy == rows - 1 { 0 } else { gy + 1 } } else { gy + 1 };
-            let xcs = [xc0, gx, xc2];
-            let ycs = [yc0, gy, yc2];
-
-            unsafe {
-                let xp = self.x.as_ptr(); let yp = self.y.as_ptr();
-                let vxp = self.vx.as_ptr(); let vyp = self.vy.as_ptr();
-                for &cx in xcs.iter() {
-                    if cx < 0 || cx >= cols { continue; }
-                    let cxb = cx as usize;
-                    for &cy in ycs.iter() {
-                        if cy < 0 || cy >= rows { continue; }
-                        let c = cy as usize * cols_u + cxb;
-                        let s = self.cell_start[c] as usize;
-                        let e = self.cell_start[c + 1] as usize;
-                        if s == e { continue; }
-                        accum_range(xp, yp, vxp, vyp, s, e, fx, fy, hw, ww, hh, wh, perception2, sep2, wrap, &mut acc);
+    #[cfg(not(target_feature = "simd128"))]
+    fn accum_fish(&self, i: usize, cols: i32, rows: i32, cols_u: usize, wrap: bool,
+                  hw: f32, ww: f32, hh: f32, wh: f32, perception2: f32, sep2: f32) -> Acc {
+        let fx = self.x[i]; let fy = self.y[i];
+        let gx = self.gx[i]; let gy = self.gy[i];
+        let xc0 = if wrap { if gx == 0 { cols - 1 } else { gx - 1 } } else { gx - 1 };
+        let xc2 = if wrap { if gx == cols - 1 { 0 } else { gx + 1 } } else { gx + 1 };
+        let yc0 = if wrap { if gy == 0 { rows - 1 } else { gy - 1 } } else { gy - 1 };
+        let yc2 = if wrap { if gy == rows - 1 { 0 } else { gy + 1 } } else { gy + 1 };
+        let xcs = [xc0, gx, xc2];
+        let ycs = [yc0, gy, yc2];
+        let mut acc = Acc::default();
+        for &cx in xcs.iter() {
+            if cx < 0 || cx >= cols { continue; }
+            let cxb = cx as usize;
+            for &cy in ycs.iter() {
+                if cy < 0 || cy >= rows { continue; }
+                let c = cy as usize * cols_u + cxb;
+                let s = self.cell_start[c] as usize;
+                let e = self.cell_start[c + 1] as usize;
+                for k in s..e {
+                    if k == i { continue; }
+                    let mut dx = self.x[k] - fx;
+                    let mut dy = self.y[k] - fy;
+                    if wrap {
+                        if dx > hw { dx -= ww; } else if dx < -hw { dx += ww; }
+                        if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
+                    }
+                    let d2 = dx * dx + dy * dy;
+                    if d2 > 0.0 && d2 < perception2 {
+                        acc.cdx += dx; acc.cdy += dy;
+                        acc.avx += self.vx[k]; acc.avy += self.vy[k];
+                        acc.cnt += 1;
+                        if d2 < sep2 { acc.sdx -= dx; acc.sdy -= dy; acc.scnt += 1; }
                     }
                 }
             }
+        }
+        acc
+    }
+
+    fn forces(&mut self, dt: f32, p: &[f32; PARAM_LEN]) {
+        let n = self.x.len();
+        if n == 0 { return; }
+        let nstep = dt * REF_TICKS;
+        let cohesion = p[0]; let separation = p[1]; let align = p[2];
+        let mouse_field = p[4] > 0.5;
+        let mx = p[5]; let my = p[6]; let mradius = p[7]; let mattract = p[8]; let mrepel = p[9];
+        let left_down = p[10] > 0.5; let scatter_f = p[11];
+        let wrap = p[12] > 0.5;
+        let left = p[13]; let top = p[14]; let right = p[15]; let bottom = p[16];
+        let wander_scale = p[18];
+        let ww = right - left; let wh = bottom - top;
+        let hw = ww * 0.5; let hh = wh * 0.5;
+        let perception2 = PERCEPTION * PERCEPTION;
+        let sep2 = SEP_RADIUS * SEP_RADIUS;
+        let cols = self.last_cols; let rows = self.last_rows; let cols_u = self.last_cols_u;
+
+        for i in 0..n {
+            let fx = self.x[i]; let fy = self.y[i];
+            let acc = self.accum_fish(i, cols, rows, cols_u, wrap, hw, ww, hh, wh, perception2, sep2);
 
             let cdx = acc.cdx; let cdy = acc.cdy;
             let avx = acc.avx; let avy = acc.avy;
@@ -445,8 +486,19 @@ impl Sim {
             self.accx[i] = accx;
             self.accy[i] = accy;
         }
+    }
 
-        // 积分 + 边界
+    // 阶段三：积分 + 边界
+    fn integrate(&mut self, dt: f32, p: &[f32; PARAM_LEN]) {
+        let n = self.x.len();
+        if n == 0 { return; }
+        let nstep = dt * REF_TICKS;
+        let speed = p[3];
+        let wrap = p[12] > 0.5;
+        let left = p[13]; let top = p[14]; let right = p[15]; let bottom = p[16];
+        let zoom = p[17];
+        let ww = right - left; let wh = bottom - top;
+
         let edge = EDGE_ZONE / zoom;
         let ezk = 0.5 * nstep;
         let damp = 0.94f32.powf(nstep);
@@ -480,6 +532,12 @@ impl Sim {
             }
             self.x[i] = nx; self.y[i] = ny;
         }
+    }
+
+    fn step(&mut self, dt: f32, p: &[f32; PARAM_LEN]) {
+        self.build(p);
+        self.forces(dt, p);
+        self.integrate(dt, p);
     }
 }
 
@@ -516,6 +574,14 @@ pub extern "C" fn sim_reset(left: f32, top: f32, right: f32, bottom: f32, speed:
 
 #[no_mangle]
 pub extern "C" fn sim_update(dt: f32) { sim().step(dt, params()); }
+
+// 分阶段导出（用于性能剖析）
+#[no_mangle]
+pub extern "C" fn sim_phase_build() { sim().build(params()); }
+#[no_mangle]
+pub extern "C" fn sim_phase_forces(dt: f32) { sim().forces(dt, params()); }
+#[no_mangle]
+pub extern "C" fn sim_phase_integrate(dt: f32) { sim().integrate(dt, params()); }
 
 #[no_mangle]
 pub extern "C" fn sim_paint(wx: f32, wy: f32, r: f32, hue: f32) {
