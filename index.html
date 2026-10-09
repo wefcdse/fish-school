@@ -203,7 +203,7 @@ function updateBounds() {
 
 /* ---------------- 鱼（Rust / WASM） ---------------- */
 let wasm = null, mem = null;
-let xs, ys, vxs, vys, sizes, hues, phases, paramsF32;
+let xs, ys, vxs, vys, sizes, hues, phases, paramsF32, statsF32;
 
 function refreshViews() {
   const buf = mem.buffer;
@@ -216,6 +216,7 @@ function refreshViews() {
   hues = new Float32Array(buf, wasm.sim_hue_ptr(), n);
   phases = new Float32Array(buf, wasm.sim_phase_ptr(), n);
   paramsF32 = new Float32Array(buf, wasm.sim_params_ptr(), 24);
+  statsF32 = new Float32Array(buf, wasm.sim_stats_ptr(), 8);
 }
 function fishCount() { return wasm ? wasm.sim_len() : 0; }
 
@@ -840,10 +841,12 @@ function main() {
       const dtms = realDt * speedMul * 1000;
       const mm = Math.floor(simTime / 60), ss = simTime - mm * 60;
       const clock = mm + ':' + (ss < 10 ? '0' : '') + ss.toFixed(1);
+      wasm.sim_compute_stats();
       diagEl.innerHTML =
         `渲染 <b>${submitS.toFixed(1)}</b> · GPU <b>${gpu}</b> · update <b>${upd}</b> ms · 倍速 <b>×${speedMul}</b>` +
         `<br>帧 <b>${frameS.toFixed(1)}</b> · 周期 <b>${(1000 / fpsS).toFixed(1)}</b> · fps <b>${Math.round(fpsS)}</b> · 鱼 <b>${fishCount()}</b>` +
-        `<br>逻辑时间 <b>${clock}</b> · tick dt <b>${dtms.toFixed(1)}</b> ms`;
+        `<br>逻辑时间 <b>${clock}</b> · tick dt <b>${dtms.toFixed(1)}</b> ms` +
+        `<br>格密度 前10/20/50 <b>${statsF32[0].toFixed(1)}</b>/<b>${statsF32[1].toFixed(1)}</b>/<b>${statsF32[2].toFixed(1)}</b> · 均 <b>${statsF32[4].toFixed(1)}</b> · 格数 <b>${statsF32[3].toFixed(0)}</b>`;
     }
     requestAnimationFrame(frame);
   }

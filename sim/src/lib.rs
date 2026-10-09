@@ -375,3 +375,32 @@ pub extern "C" fn sim_size_ptr() -> *const f32 { sim().size.as_ptr() }
 pub extern "C" fn sim_hue_ptr() -> *const f32 { sim().hue.as_ptr() }
 #[no_mangle]
 pub extern "C" fn sim_phase_ptr() -> *const f32 { sim().phase.as_ptr() }
+
+/* 网格密度统计：最密的前 k 格的平均鱼数 */
+static mut STATS: [f32; 8] = [0.0; 8];
+
+#[no_mangle]
+pub extern "C" fn sim_compute_stats() {
+    let s = sim();
+    let mut lens: Vec<u32> = s.grid.values().map(|v| v.len() as u32).collect();
+    lens.sort_unstable_by(|a, b| b.cmp(a));
+    let avg_top = |k: usize| -> f32 {
+        if lens.is_empty() { return 0.0; }
+        let kk = k.min(lens.len());
+        let sum: u32 = lens[..kk].iter().sum();
+        sum as f32 / kk as f32
+    };
+    let cells = lens.len();
+    let total = s.x.len() as f32;
+    unsafe {
+        let st = std::ptr::addr_of_mut!(STATS);
+        (*st)[0] = avg_top(10);
+        (*st)[1] = avg_top(20);
+        (*st)[2] = avg_top(50);
+        (*st)[3] = cells as f32;
+        (*st)[4] = if cells > 0 { total / cells as f32 } else { 0.0 };
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn sim_stats_ptr() -> *const f32 { unsafe { std::ptr::addr_of!(STATS) as *const f32 } }
