@@ -424,7 +424,10 @@ impl Sim {
 
         for i in 0..n {
             let fx = self.x[i]; let fy = self.y[i];
-            let acc = self.accum_fish(i, cols, rows, cols_u, wrap, hw, ww, hh, wh, perception2, sep2);
+            // 内部格永远不会跨边界：跳过 min-image 开销，只有边界格才可能 wrap
+            let gxf = self.gx[i]; let gyf = self.gy[i];
+            let wrap_i = wrap && (gxf == 0 || gxf == cols - 1 || gyf == 0 || gyf == rows - 1);
+            let acc = self.accum_fish(i, cols, rows, cols_u, wrap_i, hw, ww, hh, wh, perception2, sep2);
 
             let cdx = acc.cdx; let cdy = acc.cdy;
             let avx = acc.avx; let avy = acc.avy;
