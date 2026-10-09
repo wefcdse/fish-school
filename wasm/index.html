@@ -844,7 +844,7 @@ function main() {
       wasm.sim_compute_stats();
       refreshViews();   // 统计可能触发内存增长，重新建立视图后再读
       diagEl.innerHTML =
-        `渲染 <b>${submitS.toFixed(1)}</b> · GPU <b>${gpu}</b> · update <b>${upd}</b> ms · 倍速 <b>×${speedMul}</b>` +
+        `渲染 <b>${submitS.toFixed(1)}</b> · GPU <b>${gpu}</b> · update <b>${upd}</b> ms · 倍速 <b>×${speedMul}</b> · <b>${engineName}</b>` +
         `<br>帧 <b>${frameS.toFixed(1)}</b> · 周期 <b>${(1000 / fpsS).toFixed(1)}</b> · fps <b>${Math.round(fpsS)}</b> · 鱼 <b>${fishCount()}</b>` +
         `<br>逻辑时间 <b>${clock}</b> · tick dt <b>${dtms.toFixed(1)}</b> ms` +
         `<br>格密度 前10/20/50 <b>${statsF32[0].toFixed(1)}</b>/<b>${statsF32[1].toFixed(1)}</b>/<b>${statsF32[2].toFixed(1)}</b> · 均 <b>${statsF32[4].toFixed(1)}</b> · 格数 <b>${statsF32[3].toFixed(0)}</b>`;
@@ -858,14 +858,20 @@ function main() {
   frame();
 }
 
-/* ---------------- 加载内联 wasm 并启动 ---------------- */
+/* ---------------- 加载内联 wasm 并启动（SIMD 优先，回退标量） ---------------- */
 function b64ToBytes(b64) {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
-WebAssembly.instantiate(b64ToBytes(window.SIM_WASM_B64), {}).then(res => {
+// WebAssembly SIMD 特性检测
+const SIMD_PROBE = new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11]);
+const hasSimd = typeof WebAssembly.validate === 'function' && WebAssembly.validate(SIMD_PROBE);
+let engineName = '';
+const wasmB64 = (hasSimd && window.SIM_WASM_B64_SIMD) ? window.SIM_WASM_B64_SIMD : window.SIM_WASM_B64_SCALAR;
+engineName = (wasmB64 === window.SIM_WASM_B64_SIMD) ? 'SIMD' : '标量';
+WebAssembly.instantiate(b64ToBytes(wasmB64), {}).then(res => {
   wasm = res.instance.exports;
   mem = wasm.memory;
   wasm.sim_new();
