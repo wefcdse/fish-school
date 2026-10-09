@@ -392,9 +392,10 @@ window.addEventListener('mouseup', e => {
 window.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
 
 // 面板（卡片）可拖动：按住面板空白/标题行拖动，控件上不拖
-let dragPanel = null;
+let dragPanel = null, zCounter = 10;
 document.querySelectorAll('.panel').forEach(panel => {
   panel.addEventListener('mousedown', e => {
+    panel.style.zIndex = ++zCounter;   // 点到哪张卡，哪张置顶
     if (e.button !== 0) return;
     if (e.target.closest('input, button, select, textarea, label, a')) return;   // 落在控件上不拖
     e.preventDefault();
