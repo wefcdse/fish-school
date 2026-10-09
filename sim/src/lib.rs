@@ -44,6 +44,7 @@ pub struct Sim {
     size: Vec<f32>, hue: Vec<f32>, phase: Vec<f32>, wander: Vec<f32>,
     accx: Vec<f32>, accy: Vec<f32>,
     gx: Vec<i32>, gy: Vec<i32>,
+    stat_lens: Vec<u32>,
     grid: Grid,
     rng: u32,
 }
@@ -55,6 +56,7 @@ impl Sim {
             size: Vec::new(), hue: Vec::new(), phase: Vec::new(), wander: Vec::new(),
             accx: Vec::new(), accy: Vec::new(),
             gx: Vec::new(), gy: Vec::new(),
+            stat_lens: Vec::new(),
             grid: Grid::default(),
             rng: 0x1234_5678,
         }
@@ -382,8 +384,10 @@ static mut STATS: [f32; 8] = [0.0; 8];
 #[no_mangle]
 pub extern "C" fn sim_compute_stats() {
     let s = sim();
-    let mut lens: Vec<u32> = s.grid.values().map(|v| v.len() as u32).collect();
-    lens.sort_unstable_by(|a, b| b.cmp(a));
+    s.stat_lens.clear();
+    s.stat_lens.extend(s.grid.values().map(|v| v.len() as u32));
+    s.stat_lens.sort_unstable_by(|a, b| b.cmp(a));
+    let lens = &s.stat_lens;
     let avg_top = |k: usize| -> f32 {
         if lens.is_empty() { return 0.0; }
         let kk = k.min(lens.len());

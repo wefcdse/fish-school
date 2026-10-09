@@ -842,6 +842,7 @@ function main() {
       const mm = Math.floor(simTime / 60), ss = simTime - mm * 60;
       const clock = mm + ':' + (ss < 10 ? '0' : '') + ss.toFixed(1);
       wasm.sim_compute_stats();
+      refreshViews();   // 统计可能触发内存增长，重新建立视图后再读
       diagEl.innerHTML =
         `渲染 <b>${submitS.toFixed(1)}</b> · GPU <b>${gpu}</b> · update <b>${upd}</b> ms · 倍速 <b>×${speedMul}</b>` +
         `<br>帧 <b>${frameS.toFixed(1)}</b> · 周期 <b>${(1000 / fpsS).toFixed(1)}</b> · fps <b>${Math.round(fpsS)}</b> · 鱼 <b>${fishCount()}</b>` +
