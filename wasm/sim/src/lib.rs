@@ -4,7 +4,6 @@
 const PERCEPTION: f32 = 60.0;
 const SEP_RADIUS: f32 = 22.0;
 const MOUSE_REPEL_RADIUS: f32 = 70.0;
-const SCATTER_RADIUS: f32 = 260.0;
 const EDGE_ZONE: f32 = 80.0;
 const REF_TICKS: f32 = 60.0;
 const CELL_SIZE: f32 = PERCEPTION;
@@ -515,7 +514,7 @@ impl Sim {
         let cohesion = p[0]; let separation = p[1]; let align = p[2];
         let mouse_field = p[4] > 0.5;
         let mx = p[5]; let my = p[6]; let mradius = p[7]; let mattract = p[8]; let mrepel = p[9];
-        let left_down = p[10] > 0.5; let scatter_f = p[11];
+        let left_down = p[10] > 0.5; let scatter_f = p[11]; let scatter_r = p[19];
         let wrap = p[12] > 0.5;
         let left = p[13]; let top = p[14]; let right = p[15]; let bottom = p[16];
         let wander_scale = p[18];
@@ -584,7 +583,7 @@ impl Sim {
                     if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
                 }
                 let d = (dx * dx + dy * dy).sqrt().max(1e-6);
-                let pp = (1.0 - d / SCATTER_RADIUS).max(0.0);
+                let pp = (1.0 - d / scatter_r).max(0.0);
                 accx += dx / d * pp * scatter_f;
                 accy += dy / d * pp * scatter_f;
             }
@@ -687,7 +686,7 @@ impl Sim {
         let cohesion = p[0]; let separation = p[1]; let align = p[2];
         let mouse_field = p[4] > 0.5;
         let mx = p[5]; let my = p[6]; let mradius = p[7]; let mattract = p[8]; let mrepel = p[9];
-        let left_down = p[10] > 0.5; let scatter_f = p[11];
+        let left_down = p[10] > 0.5; let scatter_f = p[11]; let scatter_r = p[19];
         let wrap = p[12] > 0.5;
         let left = p[13]; let top = p[14]; let right = p[15]; let bottom = p[16];
         let wander_scale = p[18];
@@ -743,7 +742,7 @@ impl Sim {
                     if dy > hh { dy -= wh; } else if dy < -hh { dy += wh; }
                 }
                 let d = (dx * dx + dy * dy).sqrt().max(1e-6);
-                let pp = (1.0 - d / SCATTER_RADIUS).max(0.0);
+                let pp = (1.0 - d / scatter_r).max(0.0);
                 accx += dx / d * pp * scatter_f;
                 accy += dy / d * pp * scatter_f;
             }

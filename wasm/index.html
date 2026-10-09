@@ -108,7 +108,7 @@
   <label>对齐力 <span class="val" id="vAlign"></span>
     <input type="range" id="sAlign" min="0" max="2" step="0.01" value="1.0"></label>
   <label>速度 <span class="val" id="vSpeed"></span>
-    <input type="range" id="sSpeed" min="0.4" max="3" step="0.05" value="1.4"></label>
+    <input type="range" id="sSpeed" min="0.4" max="8" step="0.05" value="1.4"></label>
   <label>扰动 <span class="val" id="vWander"></span>
     <input type="range" id="sWander" min="0" max="5" step="0.05" value="1"></label>
 
@@ -120,6 +120,12 @@
     <input type="range" id="sMRepel" min="0" max="3" step="0.01" value="0.8"></label>
   <label>影响半径 <span class="val" id="vMRadius"></span>
     <input type="range" id="sMRadius" min="80" max="600" step="1" value="320"></label>
+
+  <div class="divider"><span>驱散（按住左键）</span></div>
+  <label>驱散强度 <span class="val" id="vScatter"></span>
+    <input type="range" id="sScatter" min="0" max="4" step="0.05" value="1.5"></label>
+  <label>驱散半径 <span class="val" id="vScatterR"></span>
+    <input type="range" id="sScatterR" min="0" max="1000" step="1" value="406"></label>
 
   <div class="divider"><span>视图</span></div>
   <label>缩放 <span class="val" id="vZoom"></span>
@@ -171,6 +177,8 @@ const params = {
   mAttract: 0.5,
   mRepel: 0.8,
   mRadius: 320,
+  scatterForce: 1.5,
+  scatterRadius: 260,
   mouseField: false,
   zoom: 1,
   magZoom: 3,
@@ -181,8 +189,6 @@ const params = {
 const PERCEPTION = 60;
 const SEP_RADIUS = 22;
 const MOUSE_REPEL_RADIUS = 70;
-const SCATTER_RADIUS = 260;         // 按住左键驱散的影响半径
-const SCATTER_FORCE = 1.5;          // 驱散加速度强度（按住期间持续作用）
 const EDGE_ZONE = 80;
 const REF_TICKS = 60;              // 积分基准：dt = 1/60 时步长倍率 N = 1
 const MAX_DT = 0.1;                // 单 tick 最大积分时长（秒），防卡顿大跳
@@ -228,7 +234,8 @@ function fillParams() {
   paramsF32[4] = params.mouseField ? 1 : 0;
   paramsF32[5] = mouse.x; paramsF32[6] = mouse.y; paramsF32[7] = params.mRadius;
   paramsF32[8] = params.mAttract; paramsF32[9] = params.mRepel;
-  paramsF32[10] = mouse.leftDown ? 1 : 0; paramsF32[11] = SCATTER_FORCE;
+  paramsF32[10] = (!paint.enabled && mouse.leftDown) ? 1 : 0; paramsF32[11] = params.scatterForce;
+  paramsF32[19] = params.scatterRadius;
   paramsF32[12] = params.wrap ? 1 : 0;
   paramsF32[13] = b.left; paramsF32[14] = b.top; paramsF32[15] = b.right; paramsF32[16] = b.bottom;
   paramsF32[17] = params.zoom;
@@ -301,6 +308,14 @@ window.addEventListener('keydown', e => {
     speedIdx = Math.max(speedIdx - 1, 0);
     speedMul = SPEEDS[speedIdx];
   }
+});
+
+// 界面控件不捕获键盘焦点：Tab 跳过，鼠标/触摸交互结束后立即失焦，让画布快捷键始终生效
+const UI_CONTROL = '.panel input, .panel select, .panel button, .panel textarea';
+document.querySelectorAll(UI_CONTROL).forEach(el => { el.tabIndex = -1; });
+window.addEventListener('pointerup', () => {
+  const a = document.activeElement;
+  if (a && a.matches && a.matches(UI_CONTROL)) a.blur();
 });
 
 /* ---------------- 模拟（Rust / WASM） ---------------- */
@@ -898,6 +913,7 @@ bind('sWander', 'vWander', 'wander', v => (+v).toFixed(2));
 bind('sMAttract', 'vMAttract', 'mAttract', v => (+v).toFixed(2));
 bind('sMRepel', 'vMRepel', 'mRepel', v => (+v).toFixed(2));
 bind('sMRadius', 'vMRadius', 'mRadius', v => Math.round(v));
+bind('sScatter', 'vScatter', 'scatterForce', v => (+v).toFixed(2));
 bind('sMag', 'vMag', 'magZoom', v => (+v).toFixed(1) + '×');
 bind('sMagR', 'vMagR', 'magRadius', v => Math.round(v) + 'px');
 
@@ -968,6 +984,18 @@ function applyZoom() {
 }
 sZoom.addEventListener('input', applyZoom);
 applyZoom();
+
+/* 驱散半径：指数均匀，slider 0..1000 → 40..4000 */
+const SR_MIN = 40, SR_MAX = 4000, SR_RATIO = SR_MAX / SR_MIN;
+const sScatterR = document.getElementById('sScatterR');
+const vScatterR = document.getElementById('vScatterR');
+function applyScatterR() {
+  const t = parseFloat(sScatterR.value) / 1000;
+  params.scatterRadius = SR_MIN * Math.pow(SR_RATIO, t);
+  vScatterR.textContent = Math.round(params.scatterRadius);
+}
+sScatterR.addEventListener('input', applyScatterR);
+applyScatterR();
 
 })();
 </script>
