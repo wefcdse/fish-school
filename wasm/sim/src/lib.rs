@@ -176,7 +176,7 @@ impl Sim {
         }
 
         // 计数排序：把鱼索引按格号排进连续数组（CSR）
-        for c in 0..=ncells { self.cell_start[c] = 0; }
+        self.cell_start[..=ncells].fill(0);
         for i in 0..n { self.cell_start[self.cell_idx[i] as usize] += 1; }
         let mut running = 0u32;
         for c in 0..ncells {
@@ -202,15 +202,20 @@ impl Sim {
             let mut sdx = 0.0f32; let mut sdy = 0.0f32;
             let mut cnt = 0i32; let mut scnt = 0i32;
 
-            for ox in -1..=1 {
-                let nx = gx + ox;
-                if !wrap && (nx < 0 || nx >= cols) { continue; }
-                let cx = if wrap { nx.rem_euclid(cols) } else { nx };
-                for oy in -1..=1 {
-                    let ny = gy + oy;
-                    if !wrap && (ny < 0 || ny >= rows) { continue; }
-                    let cy = if wrap { ny.rem_euclid(rows) } else { ny };
-                    let c = (cy as usize) * cols_u + cx as usize;
+            // 邻格列/行索引：wrap 用条件回绕（无整数除法），非 wrap 用 -1 表示越界
+            let xc0 = if wrap { if gx == 0 { cols - 1 } else { gx - 1 } } else { gx - 1 };
+            let xc2 = if wrap { if gx == cols - 1 { 0 } else { gx + 1 } } else { gx + 1 };
+            let yc0 = if wrap { if gy == 0 { rows - 1 } else { gy - 1 } } else { gy - 1 };
+            let yc2 = if wrap { if gy == rows - 1 { 0 } else { gy + 1 } } else { gy + 1 };
+            let xcs = [xc0, gx, xc2];
+            let ycs = [yc0, gy, yc2];
+
+            for &cx in xcs.iter() {
+                if cx < 0 || cx >= cols { continue; }
+                let cxb = cx as usize;
+                for &cy in ycs.iter() {
+                    if cy < 0 || cy >= rows { continue; }
+                    let c = cy as usize * cols_u + cxb;
                     let s = self.cell_start[c] as usize;
                     let e = self.cell_start[c + 1] as usize;
                     for k in s..e {
