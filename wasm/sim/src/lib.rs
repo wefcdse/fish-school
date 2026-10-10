@@ -1047,6 +1047,8 @@ pub extern "C" fn sim_size_ptr() -> *const f32 { sim().size.as_ptr() }
 pub extern "C" fn sim_hue_ptr() -> *const f32 { sim().hue.as_ptr() }
 #[no_mangle]
 pub extern "C" fn sim_phase_ptr() -> *const f32 { sim().phase.as_ptr() }
+#[no_mangle]
+pub extern "C" fn sim_wander_ptr() -> *const f32 { sim().wander.as_ptr() }
 
 /* 网格密度统计：最密的前 k 格的平均鱼数 */
 static mut STATS: [f32; 8] = [0.0; 8];

@@ -94,6 +94,7 @@
   .panel.p-scatter { right: 20px; top: 400px; }
   .panel.p-mouse { right: 230px; top: 18px; }
   .panel.p-view { right: 230px; top: 270px; }
+  .panel.p-save { right: 230px; top: 500px; }
   #siteEdit { display: flex; flex-direction: column; gap: 10px; }
   .panel .btn {
     width: 100%; padding: 6px 8px; cursor: pointer;
@@ -103,6 +104,16 @@
   }
   .panel .btn:hover { background: rgba(60,120,190,.45); }
   .panel .btn.active { background: rgba(70,150,110,.55); border-color: rgba(140,240,180,.55); color: #eafff4; }
+  .panel .pin {
+    position: absolute; top: 5px; right: 7px;
+    width: 22px; height: 22px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; line-height: 1; cursor: pointer; color: #7fb4e8;
+    background: transparent; border: 1px solid rgba(120,190,255,.25); border-radius: 6px;
+  }
+  .panel .pin:hover { background: rgba(60,120,190,.4); color: #cfe6ff; }
+  .panel.pinned .pin { background: rgba(70,150,110,.55); border-color: rgba(140,240,180,.6); color: #eafff4; }
+  body.ui-min .panel.pinned, body.ui-hidden .panel.pinned { opacity: 1; pointer-events: auto; }
 </style>
 </head>
 <body>
@@ -160,9 +171,16 @@
     <input type="range" id="sMagR" min="50" max="220" step="1" value="96"></label>
 </div>
 
+<div class="panel p-save">
+  <div class="row"><span>保存和恢复</span></div>
+  <button id="btnSave" class="btn">保存（下载 JSON）</button>
+  <button id="btnLoad" class="btn">恢复（载入 JSON）</button>
+  <input type="file" id="loadFile" accept="application/json,.json" style="display:none">
+</div>
+
 <div class="hud">
   <div>移动鼠标 → 蓝色力场吸引鱼群，内圈橙色排斥</div>
-  <div><b>中键</b> 放大镜 · <b>左键</b> 按住驱散 · <b>空格</b> 暂停 · <b>R</b> 重置 · <b>W/S</b> 倍速 · <b>F1</b> 界面</div>
+  <div><b>中键</b> 放大镜 · <b>左键</b> 按住驱散 · <b>空格</b> 暂停 · <b>R</b> 打乱 · <b>W/S</b> 倍速 · <b>F1</b> 界面</div>
 </div>
 
 <div class="panel paint">
@@ -394,6 +412,11 @@ window.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(
 // 面板（卡片）可拖动：按住面板空白/标题行拖动，控件上不拖
 let dragPanel = null, zCounter = 10;
 document.querySelectorAll('.panel').forEach(panel => {
+  const pin = document.createElement('button');   // 固定显示按钮（右上角）
+  pin.className = 'pin'; pin.type = 'button'; pin.tabIndex = -1; pin.textContent = '🔓';
+  pin.title = '固定显示（隐藏界面时也保留）';
+  pin.addEventListener('click', () => { panel.classList.toggle('pinned'); pin.textContent = panel.classList.contains('pinned') ? '🔒' : '🔓'; });
+  panel.appendChild(pin);
   panel.addEventListener('mousedown', e => {
     panel.style.zIndex = ++zCounter;   // 点到哪张卡，哪张置顶
     if (e.button !== 0) return;
@@ -420,8 +443,9 @@ window.addEventListener('keydown', e => {
     document.body.classList.toggle('paused', paused);
     e.preventDefault();
   } else if (e.code === 'KeyR') {
-    spawn(params.count);
-    simTime = 0;
+    // 只打乱鱼的位置，保留颜色等其它属性
+    const w = bounds.right - bounds.left, h = bounds.bottom - bounds.top;
+    for (const f of fishes) { f.x = bounds.left + Math.random() * w; f.y = bounds.top + Math.random() * h; }
   } else if (e.code === 'KeyW') {
     speedIdx = Math.min(speedIdx + 1, SPEEDS.length - 1);
     speedMul = SPEEDS[speedIdx];
@@ -1130,6 +1154,15 @@ function render() {
 /* ---------------- 主循环 ---------------- */
 (function main() {
   let fpsS = 60, updS = 0, submitS = 0, frameS = 0, frameCount = 0, lastT = performance.now();
+  let hiddenPaused = false;
+  document.addEventListener('visibilitychange', () => {   // 后台自动暂停；回来重置计时并恢复
+    if (document.hidden) {
+      if (!paused) { paused = true; hiddenPaused = true; document.body.classList.add('paused'); }
+    } else {
+      lastT = performance.now();
+      if (hiddenPaused) { paused = false; hiddenPaused = false; document.body.classList.remove('paused'); }
+    }
+  });
 
   function frame() {
     const frameStart = performance.now();
@@ -1350,6 +1383,102 @@ syncDefLabels();
 const cbShowAllR = document.getElementById('cbShowAllR');
 cbShowAllR.addEventListener('change', () => { showAllRadii = cbShowAllR.checked; });
 showAllRadii = cbShowAllR.checked;
+
+/* ---------------- 保存 / 恢复 ---------------- */
+function stamp() {
+  const d = new Date(), p = x => String(x).padStart(2, '0');
+  return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + '-' + p(d.getMinutes()) + '-' + p(d.getSeconds());
+}
+function saveState() {
+  const data = {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    simTime: simTime, speedIndex: speedIdx,
+    params: { ...params },
+    paint: { enabled: paint.enabled, hue: paint.hue, radius: paint.radius, color: document.getElementById('paintColor').value },
+    scatterPts: scatterPts.map(p => ({ x: p.x, y: p.y, r: p.r, s: p.s })),
+    count: fishes.length,
+    fish: {
+      x: fishes.map(f => f.x), y: fishes.map(f => f.y),
+      vx: fishes.map(f => f.vx), vy: fishes.map(f => f.vy),
+      size: fishes.map(f => f.size), hue: fishes.map(f => f.hue),
+      phase: fishes.map(f => f.phase), wander: fishes.map(f => f.wander),
+    },
+  };
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = '鱼群模拟-' + stamp() + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+function syncUIFromParams() {
+  const setS = (id, valId, val, fmt) => {
+    const s = document.getElementById(id), v = valId && document.getElementById(valId);
+    if (s) s.value = val;
+    if (v && fmt) v.textContent = fmt(val);
+  };
+  setS('sCohesion', 'vCohesion', params.cohesion, x => (+x).toFixed(2));
+  setS('sSeparation', 'vSeparation', params.separation, x => (+x).toFixed(2));
+  setS('sAlign', 'vAlign', params.align, x => (+x).toFixed(2));
+  setS('sSpeed', 'vSpeed', params.speed, x => (+x).toFixed(2));
+  setS('sWander', 'vWander', params.wander, x => (+x).toFixed(2));
+  setS('sMAttract', 'vMAttract', params.mAttract, x => (+x).toFixed(2));
+  setS('sMRepel', 'vMRepel', params.mRepel, x => (+x).toFixed(2));
+  setS('sMRadius', 'vMRadius', params.mRadius, x => Math.round(x));
+  setS('sScatter', 'vScatter', params.scatterForce, x => (+x).toFixed(2));
+  setS('sMag', 'vMag', params.magZoom, x => (+x).toFixed(1) + '×');
+  setS('sMagR', 'vMagR', params.magRadius, x => Math.round(x) + 'px');
+  setS('sCount', null, Math.round(1000 * Math.log(params.count / COUNT_MIN) / Math.log(COUNT_RATIO)), null);
+  document.getElementById('vCount').textContent = Math.round(params.count);
+  setS('sScatterR', null, Math.round(1000 * Math.log(params.scatterRadius / SR_MIN) / Math.log(SR_RATIO)), null);
+  document.getElementById('vScatterR').textContent = Math.round(params.scatterRadius);
+  setS('sZoom', null, Math.round(1000 * Math.log(params.zoom / ZOOM_MIN) / Math.log(ZOOM_RATIO)), null);
+  document.getElementById('vZoom').textContent = params.zoom.toFixed(2) + '×';
+  document.getElementById('cbMouse').checked = !!params.mouseField;
+  document.getElementById('cbWrap').checked = !!params.wrap;
+  document.getElementById('cbPaint').checked = !!paint.enabled;
+  document.getElementById('sBrush').value = paint.radius;
+  document.getElementById('vBrush').textContent = paint.radius;
+}
+function loadState(data) {
+  if (!data) return;
+  if (data.params) Object.assign(params, data.params);
+  if (data.paint) {
+    paint.enabled = !!data.paint.enabled;
+    if (typeof data.paint.hue === 'number') paint.hue = data.paint.hue;
+    if (typeof data.paint.radius === 'number') paint.radius = data.paint.radius;
+    if (data.paint.color) document.getElementById('paintColor').value = data.paint.color;
+  }
+  if (typeof data.speedIndex === 'number') { speedIdx = Math.max(0, Math.min(SPEEDS.length - 1, data.speedIndex | 0)); speedMul = SPEEDS[speedIdx]; }
+  if (typeof data.simTime === 'number') simTime = data.simTime;
+  scatterPts.length = 0;
+  (data.scatterPts || []).forEach(p => scatterPts.push({ x: +p.x, y: +p.y, r: +p.r, s: +p.s }));
+  selectedSite = -1; syncSiteEditor();
+  const f = data.fish || {};
+  const n = (f.x && f.x.length) || data.count || 0;
+  params.count = n;
+  fishes = [];
+  for (let i = 0; i < n; i++) {
+    const o = new Fish();
+    o.x = f.x[i]; o.y = f.y[i]; o.vx = f.vx[i]; o.vy = f.vy[i];
+    o.size = f.size[i]; o.hue = f.hue[i]; o.phase = f.phase[i];
+    if (f.wander) o.wander = f.wander[i];
+    fishes.push(o);
+  }
+  syncUIFromParams();
+}
+document.getElementById('btnSave').addEventListener('click', saveState);
+const loadFileEl = document.getElementById('loadFile');
+document.getElementById('btnLoad').addEventListener('click', () => loadFileEl.click());
+loadFileEl.addEventListener('change', () => {
+  const file = loadFileEl.files[0];
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = () => { try { loadState(JSON.parse(reader.result)); } catch (e) { alert('载入失败：' + e.message); } loadFileEl.value = ''; };
+    reader.readAsText(file);
+  }
+});
 
 })();
 </script>
