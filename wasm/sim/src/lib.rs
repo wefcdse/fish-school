@@ -613,6 +613,8 @@ impl Sim {
                 }
             }
 
+            poly_force(fx, fy, &mut accx, &mut accy);
+
             self.accx[i] = accx;
             self.accy[i] = accy;
         }
@@ -791,6 +793,8 @@ impl Sim {
                     }
                 }
             }
+
+            poly_force(fx, fy, &mut accx, &mut accy);
 
             self.accx[i] = accx;
             self.accy[i] = accy;
@@ -974,6 +978,50 @@ const MAX_SITES: usize = 64;
 static mut SCATTER: [f32; MAX_SITES * 4] = [0.0; MAX_SITES * 4];  // 每点 x,y,radius,strength
 static mut SCATTER_N: i32 = 0;
 
+const MAX_POLYS: usize = 32;
+const MAX_PVERTS: usize = 24;
+const POLY_STRIDE: usize = 6 + MAX_PVERTS * 2;   // strength,n,dirX,dirY,cx,cy, 顶点 x,y...
+static mut POLY: [f32; MAX_POLYS * POLY_STRIDE] = [0.0; MAX_POLYS * POLY_STRIDE];
+static mut POLY_N: i32 = 0;
+
+// 多边形力场：鱼在多边形内部时，沿「质心 → 方向点」的单位方向施加定强力
+#[inline]
+fn poly_force(fx: f32, fy: f32, accx: &mut f32, accy: &mut f32) {
+    unsafe {
+        let pn = POLY_N as usize;
+        if pn == 0 { return; }
+        let poly = &*std::ptr::addr_of!(POLY);
+        for pi in 0..pn {
+            let base = pi * POLY_STRIDE;
+            let strength = poly[base];
+            let nv = poly[base + 1] as usize;
+            if nv < 3 || strength == 0.0 { continue; }
+            let dirx = poly[base + 2]; let diry = poly[base + 3];
+            let cx = poly[base + 4]; let cy = poly[base + 5];
+            let mut inside = false;
+            let mut j = nv - 1;
+            for vi in 0..nv {
+                let vxi = poly[base + 6 + vi * 2];
+                let vyi = poly[base + 6 + vi * 2 + 1];
+                let vxj = poly[base + 6 + j * 2];
+                let vyj = poly[base + 6 + j * 2 + 1];
+                if ((vyi > fy) != (vyj > fy))
+                    && (fx < (vxj - vxi) * (fy - vyi) / (vyj - vyi) + vxi)
+                {
+                    inside = !inside;
+                }
+                j = vi;
+            }
+            if inside {
+                let dx = dirx - cx; let dy = diry - cy;
+                let d = (dx * dx + dy * dy).sqrt().max(1e-6);
+                *accx += dx / d * strength;
+                *accy += dy / d * strength;
+            }
+        }
+    }
+}
+
 #[inline]
 fn sim() -> &'static mut Sim {
     unsafe { &mut *(std::ptr::read(std::ptr::addr_of!(SIM_PTR))) }
@@ -1032,6 +1080,17 @@ pub extern "C" fn sim_scatter_ptr() -> *mut f32 { unsafe { std::ptr::addr_of_mut
 pub extern "C" fn sim_scatter_cap() -> i32 { MAX_SITES as i32 }
 #[no_mangle]
 pub extern "C" fn sim_set_scatter_count(n: i32) { unsafe { SCATTER_N = n.clamp(0, MAX_SITES as i32); } }
+
+#[no_mangle]
+pub extern "C" fn sim_poly_ptr() -> *mut f32 { unsafe { std::ptr::addr_of_mut!(POLY) as *mut f32 } }
+#[no_mangle]
+pub extern "C" fn sim_poly_cap() -> i32 { MAX_POLYS as i32 }
+#[no_mangle]
+pub extern "C" fn sim_poly_stride() -> i32 { POLY_STRIDE as i32 }
+#[no_mangle]
+pub extern "C" fn sim_poly_max_verts() -> i32 { MAX_PVERTS as i32 }
+#[no_mangle]
+pub extern "C" fn sim_set_poly_count(n: i32) { unsafe { POLY_N = n.clamp(0, MAX_POLYS as i32); } }
 
 #[no_mangle]
 pub extern "C" fn sim_x_ptr() -> *const f32 { sim().x.as_ptr() }

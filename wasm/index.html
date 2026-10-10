@@ -91,6 +91,8 @@
   .panel.p-view { right: 230px; top: 270px; }
   .panel.p-save { right: 230px; top: 500px; }
   .panel.p-speed { right: 20px; top: 570px; }
+  .panel.p-poly { right: 230px; top: 650px; }
+  #polyov { position: fixed; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
   .panel input[type=color] {
     width: 100%; height: 26px; padding: 0; cursor: pointer;
     border: 1px solid rgba(90,160,240,.3); border-radius: 6px;
@@ -119,6 +121,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+<canvas id="polyov"></canvas>
 
 <div class="title">鱼群模拟<small>BOIDS FLOCKING · WEBGL</small></div>
 <div class="diag" id="diag"></div>
@@ -186,6 +189,19 @@
   <label>步数 <span class="val" id="vSteps"></span>
     <input type="range" id="sSteps" min="1" max="256" step="1" value="1"></label>
   <button id="btnResetSpeed" class="btn">重置倍数步数</button>
+</div>
+
+<div class="panel p-poly">
+  <div class="row"><span>多边形力场</span></div>
+  <label>边数 <span class="val" id="vSides"></span>
+    <input type="range" id="sSides" min="3" max="24" step="1" value="6"></label>
+  <button id="btnAddPoly" class="btn">＋ 创建多边形</button>
+  <div id="polyEdit" style="display:none">
+    <div class="divider"><span>编辑选中力场</span></div>
+    <label>强度 <span class="val" id="vPolyS"></span>
+      <input type="range" id="sPolyS" min="-4" max="4" step="0.05" value="1"></label>
+    <button id="btnDelPoly" class="btn">删除此力场</button>
+  </div>
 </div>
 
 <div class="hud">
@@ -278,7 +294,7 @@ function updateBounds() {
 
 /* ---------------- 鱼（Rust / WASM） ---------------- */
 let wasm = null, mem = null;
-let xs, ys, vxs, vys, sizes, hues, phases, wanders, paramsF32, statsF32, scatterF32;
+let xs, ys, vxs, vys, sizes, hues, phases, wanders, paramsF32, statsF32, scatterF32, polyF32;
 
 function refreshViews() {
   const buf = mem.buffer;
@@ -294,6 +310,7 @@ function refreshViews() {
   paramsF32 = new Float32Array(buf, wasm.sim_params_ptr(), 24);
   statsF32 = new Float32Array(buf, wasm.sim_stats_ptr(), 8);
   scatterF32 = new Float32Array(buf, wasm.sim_scatter_ptr(), wasm.sim_scatter_cap() * 4);
+  polyF32 = new Float32Array(buf, wasm.sim_poly_ptr(), wasm.sim_poly_cap() * wasm.sim_poly_stride());
 }
 function fishCount() { return wasm ? wasm.sim_len() : 0; }
 
@@ -333,6 +350,11 @@ let selectedSite = -1;     // 当前选中的驱散点索引
 let dragSite = -1, dragOffX = 0, dragOffY = 0;   // 正在拖动的点
 let placeSite = false;     // 放置模式
 let showAllRadii = false;  // 是否显示所有点的半径圈
+const polyFields = [];     // 多边形力场：{ pts:[{x,y}...], dir:{x,y}, strength }
+let selectedPoly = -1;     // 当前选中的力场索引
+let dragPoly = null;       // { kind:'v'|'d'|'m', i, v, ox, oy, wx, wy, pts0, dir0 }
+const polyov = document.getElementById('polyov');
+const polyctx = polyov.getContext('2d');
 let paused = false;
 let uiMode = 0;   // 0 全显示 / 1 只留左上性能 / 2 全隐藏
 let speedMul = 1;                 // 倍速：只缩放传进 tick 的 dt
@@ -345,6 +367,20 @@ window.addEventListener('mousemove', e => {
     dragPanel.el.style.top = (e.clientY - dragPanel.offY) + 'px';
     return;
   }
+  if (dragPoly) {                                          // 拖动多边形（顶点/方向点/整体）
+    const w = screenToWorld(e.clientX, e.clientY);
+    const po = polyFields[dragPoly.i];
+    if (dragPoly.kind === 'v') {
+      po.pts[dragPoly.v].x = w.x + dragPoly.ox; po.pts[dragPoly.v].y = w.y + dragPoly.oy;
+    } else if (dragPoly.kind === 'd') {
+      po.dir.x = w.x + dragPoly.ox; po.dir.y = w.y + dragPoly.oy;
+    } else if (dragPoly.kind === 'm') {
+      const dx = w.x - dragPoly.wx, dy = w.y - dragPoly.wy;
+      for (let v = 0; v < po.pts.length; v++) { po.pts[v].x = dragPoly.pts0[v].x + dx; po.pts[v].y = dragPoly.pts0[v].y + dy; }
+      po.dir.x = dragPoly.dir0.x + dx; po.dir.y = dragPoly.dir0.y + dy;
+    }
+    return;
+  }
   if (dragSite >= 0 && dragSite < scatterPts.length) {   // 拖动驱散点
     const w = screenToWorld(e.clientX, e.clientY);
     scatterPts[dragSite].x = w.x + dragOffX; scatterPts[dragSite].y = w.y + dragOffY;
@@ -355,7 +391,7 @@ window.addEventListener('mousemove', e => {
   const w = screenToWorld(e.clientX, e.clientY);
   mouse.x = w.x; mouse.y = w.y; mouse.active = true;
 });
-window.addEventListener('mouseleave', () => { mouse.active = false; mouse.leftDown = false; mag.active = false; dragSite = -1; });
+window.addEventListener('mouseleave', () => { mouse.active = false; mouse.leftDown = false; mag.active = false; dragSite = -1; dragPoly = null; });
 // —— 驱散点：放置 / 选中 / 编辑 ——
 function siteRadius() {
   const t = parseFloat(document.getElementById('sSiteR').value) / 1000;
@@ -375,6 +411,68 @@ function hitSite(sx, sy) {
     if (Math.hypot(sx - px, sy - py) <= 12) return i;   // 只认中心小圈
   }
   return -1;
+}
+// —— 多边形力场：坐标换算 / 命中 ——
+function w2s(x, y) {
+  const z = params.zoom;
+  return { x: W / 2 + (x - W / 2) * z, y: H / 2 + (y - H / 2) * z };
+}
+function hitPolyVertex(sx, sy) {
+  for (let i = polyFields.length - 1; i >= 0; i--) {
+    const po = polyFields[i];
+    for (let v = 0; v < po.pts.length; v++) {
+      const p = w2s(po.pts[v].x, po.pts[v].y);
+      if (Math.hypot(sx - p.x, sy - p.y) <= 10) return { i, v };
+    }
+  }
+  return null;
+}
+function hitPolyDir(sx, sy) {
+  for (let i = polyFields.length - 1; i >= 0; i--) {
+    const d = w2s(polyFields[i].dir.x, polyFields[i].dir.y);
+    if (Math.hypot(sx - d.x, sy - d.y) <= 10) return i;
+  }
+  return -1;
+}
+function hitPolyInside(sx, sy) {
+  for (let i = polyFields.length - 1; i >= 0; i--) {
+    const po = polyFields[i];
+    const n = po.pts.length; let inside = false; let j = n - 1;
+    for (let v = 0; v < n; v++) {
+      const a = w2s(po.pts[v].x, po.pts[v].y), b = w2s(po.pts[j].x, po.pts[j].y);
+      if (((a.y > sy) !== (b.y > sy)) && (sx < (b.x - a.x) * (sy - a.y) / (b.y - a.y) + a.x)) inside = !inside;
+      j = v;
+    }
+    if (inside) return i;
+  }
+  return -1;
+}
+function syncPolyEditor() {
+  const ed = document.getElementById('polyEdit');
+  const sS = document.getElementById('sPolyS'), vS = document.getElementById('vPolyS');
+  if (selectedPoly >= 0 && selectedPoly < polyFields.length) {
+    const po = polyFields[selectedPoly];
+    ed.style.display = '';
+    sS.value = po.strength;
+    vS.textContent = (+po.strength).toFixed(2);
+  } else {
+    ed.style.display = 'none';
+  }
+}
+function createPoly() {
+  const sides = Math.max(3, Math.round(parseFloat(document.getElementById('sSides').value)));
+  const cx = W / 2, cy = H / 2;
+  const bw = bounds.right - bounds.left, bh = bounds.bottom - bounds.top;
+  const r = Math.max(40, Math.min(bw, bh) * 0.28);
+  const pts = [];
+  for (let k = 0; k < sides; k++) {
+    const a = -Math.PI / 2 + k * 2 * Math.PI / sides;
+    pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+  }
+  const po = { pts, dir: { x: cx, y: cy - r * 0.45 }, strength: 1 };
+  polyFields.push(po);
+  selectedPoly = polyFields.length - 1;
+  syncPolyEditor();
 }
 function setPlaceMode(on) {
   placeSite = on;
@@ -409,6 +507,20 @@ window.addEventListener('mousedown', e => {
       syncSiteEditor();
       return;
     }
+    const pv = hitPolyVertex(e.clientX, e.clientY);
+    if (pv) {                       // 点中多边形顶点：选中并开始拖动顶点
+      selectedPoly = pv.i; syncPolyEditor();
+      const w = screenToWorld(e.clientX, e.clientY);
+      dragPoly = { kind: 'v', i: pv.i, v: pv.v, ox: polyFields[pv.i].pts[pv.v].x - w.x, oy: polyFields[pv.i].pts[pv.v].y - w.y };
+      return;
+    }
+    const pd = hitPolyDir(e.clientX, e.clientY);
+    if (pd >= 0) {                  // 点中方向点：选中并开始拖动方向点
+      selectedPoly = pd; syncPolyEditor();
+      const w = screenToWorld(e.clientX, e.clientY);
+      dragPoly = { kind: 'd', i: pd, ox: polyFields[pd].dir.x - w.x, oy: polyFields[pd].dir.y - w.y };
+      return;
+    }
     const hit = hitSite(e.clientX, e.clientY);
     if (hit >= 0) {                 // 点中驱散点：选中并开始拖动，不驱散/画笔
       selectedSite = hit; syncSiteEditor();
@@ -416,7 +528,16 @@ window.addEventListener('mousedown', e => {
       dragSite = hit; dragOffX = scatterPts[hit].x - w.x; dragOffY = scatterPts[hit].y - w.y;
       return;
     }
+    const pi = hitPolyInside(e.clientX, e.clientY);
+    if (pi >= 0) {                  // 点中多边形内部：选中并开始整体拖动
+      selectedPoly = pi; syncPolyEditor();
+      const w = screenToWorld(e.clientX, e.clientY);
+      const po = polyFields[pi];
+      dragPoly = { kind: 'm', i: pi, wx: w.x, wy: w.y, pts0: po.pts.map(p => ({ x: p.x, y: p.y })), dir0: { x: po.dir.x, y: po.dir.y } };
+      return;
+    }
     if (selectedSite >= 0) { selectedSite = -1; syncSiteEditor(); }
+    if (selectedPoly >= 0) { selectedPoly = -1; syncPolyEditor(); }
     mouse.leftDown = true; mouse.sx = e.clientX; mouse.sy = e.clientY; mouse.active = true;
   } else if (e.button === 1) {
     mag.active = true; mouse.sx = e.clientX; mouse.sy = e.clientY; e.preventDefault();
@@ -425,7 +546,7 @@ window.addEventListener('mousedown', e => {
 window.addEventListener('mouseup', e => {
   // 释放始终处理，避免在画布外松手后按住状态卡住
   dragPanel = null;
-  if (e.button === 0) { mouse.leftDown = false; dragSite = -1; }
+  if (e.button === 0) { mouse.leftDown = false; dragSite = -1; dragPoly = null; }
   else if (e.button === 1) mag.active = false;
 });
 window.addEventListener('auxclick', e => { if (e.button === 1) e.preventDefault(); });
@@ -494,9 +615,33 @@ function pushScatter() {
   }
   wasm.sim_set_scatter_count(m);
 }
+function pushPoly() {
+  if (!wasm) return;
+  const cap = wasm.sim_poly_cap(), stride = wasm.sim_poly_stride(), maxV = wasm.sim_poly_max_verts();
+  const m = Math.min(polyFields.length, cap);
+  for (let i = 0; i < m; i++) {
+    const po = polyFields[i];
+    const n = Math.min(po.pts.length, maxV);
+    let cx = 0, cy = 0;
+    for (let v = 0; v < n; v++) { cx += po.pts[v].x; cy += po.pts[v].y; }
+    cx /= n; cy /= n;
+    polyF32[i * stride] = po.strength;
+    polyF32[i * stride + 1] = n;
+    polyF32[i * stride + 2] = po.dir.x;
+    polyF32[i * stride + 3] = po.dir.y;
+    polyF32[i * stride + 4] = cx;
+    polyF32[i * stride + 5] = cy;
+    for (let v = 0; v < n; v++) {
+      polyF32[i * stride + 6 + v * 2] = po.pts[v].x;
+      polyF32[i * stride + 6 + v * 2 + 1] = po.pts[v].y;
+    }
+  }
+  wasm.sim_set_poly_count(m);
+}
 function update(dt) {
   fillParams();
   pushScatter();
+  pushPoly();
   wasm.sim_update(dt);
 }
 
@@ -799,6 +944,8 @@ function resize() {
   H = window.innerHeight;
   canvas.width = Math.floor(W * dpr);
   canvas.height = Math.floor(H * dpr);
+  polyov.width = Math.floor(W * dpr);
+  polyov.height = Math.floor(H * dpr);
   createFBO();
   updateBounds();
 }
@@ -887,6 +1034,73 @@ function drawFish(uMag, magCenterX, magCenterY, lensOn, lensCX, lensCY, lensR) {
   gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
   gl.bufferSubData(gl.ARRAY_BUFFER, 0, instData.subarray(0, instCount * 6));
   gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, instCount);
+}
+
+/* 多边形力场：2D overlay 绘制（多边形边框/填充/顶点/方向点+箭头） */
+function drawPolyOverlay() {
+  if (!polyFields.length) { polyctx.setTransform(dpr, 0, 0, dpr, 0, 0); polyctx.clearRect(0, 0, W, H); return; }
+  const z = params.zoom;
+  polyctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  polyctx.clearRect(0, 0, W, H);
+  for (let i = 0; i < polyFields.length; i++) {
+    const po = polyFields[i];
+    const n = po.pts.length;
+    if (n < 3) continue;
+    const sel = i === selectedPoly;
+    let cx = 0, cy = 0;
+    const scr = [];
+    for (let v = 0; v < n; v++) {
+      const p = w2s(po.pts[v].x, po.pts[v].y);
+      scr.push(p); cx += p.x; cy += p.y;
+    }
+    cx /= n; cy /= n;
+    const d = w2s(po.dir.x, po.dir.y);
+    // 填充 + 边框
+    polyctx.beginPath();
+    polyctx.moveTo(scr[0].x, scr[0].y);
+    for (let v = 1; v < n; v++) polyctx.lineTo(scr[v].x, scr[v].y);
+    polyctx.closePath();
+    polyctx.fillStyle = sel ? 'rgba(110,225,255,0.12)' : 'rgba(120,190,255,0.05)';
+    polyctx.fill();
+    polyctx.strokeStyle = sel ? '#6fe4ff' : 'rgba(130,195,255,0.55)';
+    polyctx.lineWidth = sel ? 2 : 1;
+    polyctx.stroke();
+    // 质心 → 方向点 箭头
+    const ang = Math.atan2(d.y - cy, d.x - cx);
+    const L = Math.hypot(d.x - cx, d.y - cy);
+    if (L > 2) {
+      polyctx.beginPath();
+      polyctx.moveTo(cx, cy);
+      polyctx.lineTo(d.x, d.y);
+      polyctx.strokeStyle = 'rgba(255,184,77,0.85)';
+      polyctx.lineWidth = 1;
+      polyctx.stroke();
+      const a1 = ang + 0.5, a2 = ang - 0.5, s2 = 8;
+      polyctx.beginPath();
+      polyctx.moveTo(d.x, d.y);
+      polyctx.lineTo(d.x - s2 * Math.cos(a1), d.y - s2 * Math.sin(a1));
+      polyctx.lineTo(d.x - s2 * Math.cos(a2), d.y - s2 * Math.sin(a2));
+      polyctx.closePath();
+      polyctx.fillStyle = '#ffb84d';
+      polyctx.fill();
+    }
+    // 方向点
+    polyctx.beginPath();
+    polyctx.arc(d.x, d.y, 4.5, 0, 2 * Math.PI);
+    polyctx.fillStyle = '#ffb84d';
+    polyctx.fill();
+    polyctx.beginPath();
+    polyctx.arc(d.x, d.y, 7, 0, 2 * Math.PI);
+    polyctx.strokeStyle = 'rgba(255,184,77,0.5)';
+    polyctx.stroke();
+    // 顶点
+    for (const p of scr) {
+      polyctx.beginPath();
+      polyctx.arc(p.x, p.y, sel ? 4.5 : 3, 0, 2 * Math.PI);
+      polyctx.fillStyle = sel ? '#ffffff' : 'rgba(210,235,255,0.9)';
+      polyctx.fill();
+    }
+  }
 }
 
 function render() {
@@ -1006,6 +1220,8 @@ function render() {
     }
   }
   gl.bindVertexArray(null);
+
+  drawPolyOverlay();
 }
 
 /* ---------------- 主循环 ---------------- */
@@ -1258,6 +1474,22 @@ const cbShowAllR = document.getElementById('cbShowAllR');
 cbShowAllR.addEventListener('change', () => { showAllRadii = cbShowAllR.checked; });
 showAllRadii = cbShowAllR.checked;
 
+/* 多边形力场面板 */
+const sSides = document.getElementById('sSides'), vSides = document.getElementById('vSides');
+function syncSidesLabel() { vSides.textContent = sSides.value; }
+sSides.addEventListener('input', syncSidesLabel);
+syncSidesLabel();
+document.getElementById('btnAddPoly').addEventListener('click', createPoly);
+const sPolyS = document.getElementById('sPolyS'), vPolyS = document.getElementById('vPolyS');
+sPolyS.addEventListener('input', () => {
+  if (selectedPoly < 0) return;
+  polyFields[selectedPoly].strength = parseFloat(sPolyS.value);
+  vPolyS.textContent = (+polyFields[selectedPoly].strength).toFixed(2);
+});
+document.getElementById('btnDelPoly').addEventListener('click', () => {
+  if (selectedPoly >= 0) { polyFields.splice(selectedPoly, 1); selectedPoly = -1; syncPolyEditor(); }
+});
+
 /* 速度面板：倍数（指数 0.1–10）+ 步数（线性整数） */
 const MUL_MIN = 0.1, MUL_MAX = 10, MUL_RATIO = MUL_MAX / MUL_MIN;
 const sMul = document.getElementById('sMul'), vMul = document.getElementById('vMul');
@@ -1292,6 +1524,7 @@ function saveState() {
     params: { ...params },
     paint: { enabled: paint.enabled, hue: paint.hue, radius: paint.radius, color: document.getElementById('paintColor').value },
     scatterPts: scatterPts.map(p => ({ x: p.x, y: p.y, r: p.r, s: p.s })),
+    polyFields: polyFields.map(po => ({ pts: po.pts.map(p => ({ x: p.x, y: p.y })), dir: { x: po.dir.x, y: po.dir.y }, strength: po.strength })),
 
     panels: collectPanels(),
     count: n,
@@ -1356,6 +1589,13 @@ function loadState(data) {
   scatterPts.length = 0;
   (data.scatterPts || []).forEach(p => scatterPts.push({ x: +p.x, y: +p.y, r: +p.r, s: +p.s }));
   selectedSite = -1; syncSiteEditor();
+  polyFields.length = 0;
+  (data.polyFields || []).forEach(po => polyFields.push({
+    pts: (po.pts || []).map(p => ({ x: +p.x, y: +p.y })),
+    dir: { x: +po.dir.x, y: +po.dir.y },
+    strength: +po.strength || 0
+  }));
+  selectedPoly = -1; syncPolyEditor();
   (data.panels || []).forEach(info => {
     const p = info.id && document.querySelector('.panel.' + info.id);
     if (!p) return;
