@@ -603,6 +603,9 @@ window.addEventListener('keydown', e => {
     // 只打乱鱼的位置，保留颜色等其它属性
     const w = bounds.right - bounds.left, h = bounds.bottom - bounds.top;
     for (const f of fishes) { f.x = bounds.left + Math.random() * w; f.y = bounds.top + Math.random() * h; }
+  } else if (e.code === 'KeyV') {
+    // 重置所有鱼的速度（清零 vx/vy）
+    for (const f of fishes) { f.vx = 0; f.vy = 0; }
   }
 });
 

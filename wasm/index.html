@@ -611,6 +611,12 @@ window.addEventListener('keydown', e => {
       const w = bounds.right - bounds.left, h = bounds.bottom - bounds.top;
       for (let i = 0; i < n; i++) { xs[i] = bounds.left + Math.random() * w; ys[i] = bounds.top + Math.random() * h; }
     }
+  } else if (e.code === 'KeyV') {
+    // 重置所有鱼的速度（清零 vx/vy）
+    if (wasm) {
+      const n = wasm.sim_len();
+      for (let i = 0; i < n; i++) { vxs[i] = 0; vys[i] = 0; }
+    }
   }
 });
 
