@@ -90,6 +90,7 @@
   .panel.p-mouse { right: 230px; top: 18px; }
   .panel.p-view { right: 230px; top: 270px; }
   .panel.p-save { right: 230px; top: 500px; }
+  .panel.p-speed { right: 20px; top: 570px; }
   .panel input[type=color] {
     width: 100%; height: 26px; padding: 0; cursor: pointer;
     border: 1px solid rgba(90,160,240,.3); border-radius: 6px;
@@ -178,9 +179,18 @@
   <input type="file" id="loadFile" accept="application/json,.json" style="display:none">
 </div>
 
+<div class="panel p-speed">
+  <div class="row"><span>速度</span></div>
+  <label>倍数 <span class="val" id="vMul"></span>
+    <input type="range" id="sMul" min="0" max="1000" step="1" value="500"></label>
+  <label>步数 <span class="val" id="vSteps"></span>
+    <input type="range" id="sSteps" min="1" max="64" step="1" value="1"></label>
+  <button id="btnResetSpeed" class="btn">重置倍数步数</button>
+</div>
+
 <div class="hud">
   <div>移动鼠标 → 蓝色力场吸引鱼群，内圈橙色排斥</div>
-  <div><b>中键</b> 放大镜 · <b>左键</b> 按住驱散 · <b>空格</b> 暂停 · <b>R</b> 打乱 · <b>W/S</b> 倍速 · <b>A/D</b> 步/帧 · <b>Q</b> 复位 · <b>F1</b> 界面</div>
+  <div><b>中键</b> 放大镜 · <b>左键</b> 按住驱散 · <b>空格</b> 暂停 · <b>R</b> 打乱 · <b>F1</b> 界面</div>
 </div>
 
 <div class="panel paint">
@@ -325,10 +335,8 @@ let placeSite = false;     // 放置模式
 let showAllRadii = false;  // 是否显示所有点的半径圈
 let paused = false;
 let uiMode = 0;   // 0 全显示 / 1 只留左上性能 / 2 全隐藏
-const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 3, 5, 8, 16];
-let speedIdx = 3;                 // 指向 1.0×
-let speedMul = SPEEDS[speedIdx];  // 倍速：只缩放传进 tick 的 dt
-let tickCount = 1;                // 每帧执行 update 的次数（A/D 调）
+let speedMul = 1;                 // 倍速：只缩放传进 tick 的 dt
+let tickCount = 1;                // 每帧执行 update 的次数
 let simTime = 0;                  // 逻辑(模拟)时间累积（秒）
 
 window.addEventListener('mousemove', e => {
@@ -462,19 +470,6 @@ window.addEventListener('keydown', e => {
       const w = bounds.right - bounds.left, h = bounds.bottom - bounds.top;
       for (let i = 0; i < n; i++) { xs[i] = bounds.left + Math.random() * w; ys[i] = bounds.top + Math.random() * h; }
     }
-  } else if (e.code === 'KeyQ') {
-    speedIdx = 3; speedMul = SPEEDS[speedIdx];   // 倍速重置回 1×
-    tickCount = 1;                                // 每帧步数重置回 1
-  } else if (e.code === 'KeyW') {
-    speedIdx = Math.min(speedIdx + 1, SPEEDS.length - 1);
-    speedMul = SPEEDS[speedIdx];
-  } else if (e.code === 'KeyS') {
-    speedIdx = Math.max(speedIdx - 1, 0);
-    speedMul = SPEEDS[speedIdx];
-  } else if (e.code === 'KeyD') {
-    tickCount = Math.min(tickCount + 1, 64);   // 每帧步数 +1
-  } else if (e.code === 'KeyA') {
-    tickCount = Math.max(1, tickCount - 1);    // 每帧步数 -1
   }
 });
 
@@ -1258,6 +1253,17 @@ const cbShowAllR = document.getElementById('cbShowAllR');
 cbShowAllR.addEventListener('change', () => { showAllRadii = cbShowAllR.checked; });
 showAllRadii = cbShowAllR.checked;
 
+/* 速度面板：倍数（指数 0.1–10）+ 步数（线性整数） */
+const MUL_MIN = 0.1, MUL_MAX = 10, MUL_RATIO = MUL_MAX / MUL_MIN;
+const sMul = document.getElementById('sMul'), vMul = document.getElementById('vMul');
+const sSteps = document.getElementById('sSteps'), vSteps = document.getElementById('vSteps');
+function applyMul() { speedMul = MUL_MIN * Math.pow(MUL_RATIO, parseFloat(sMul.value) / 1000); vMul.textContent = speedMul.toFixed(2) + '×'; }
+function applySteps() { tickCount = Math.max(1, Math.round(parseFloat(sSteps.value))); vSteps.textContent = tickCount; }
+sMul.addEventListener('input', applyMul);
+sSteps.addEventListener('input', applySteps);
+applyMul(); applySteps();
+document.getElementById('btnResetSpeed').addEventListener('click', () => { sMul.value = 500; applyMul(); sSteps.value = 1; applySteps(); });
+
 /* ---------------- 保存 / 恢复 ---------------- */
 function stamp() {
   const d = new Date(), p = x => String(x).padStart(2, '0');
@@ -1277,7 +1283,7 @@ function saveState() {
   const data = {
     version: 1,
     savedAt: new Date().toISOString(),
-    simTime: simTime, speedIndex: speedIdx,
+    simTime: simTime, speedMul: speedMul, tickCount: tickCount,
     params: { ...params },
     paint: { enabled: paint.enabled, hue: paint.hue, radius: paint.radius, color: document.getElementById('paintColor').value },
     scatterPts: scatterPts.map(p => ({ x: p.x, y: p.y, r: p.r, s: p.s })),
@@ -1325,6 +1331,10 @@ function syncUIFromParams() {
   document.getElementById('cbPaint').checked = !!paint.enabled;
   document.getElementById('sBrush').value = paint.radius;
   document.getElementById('vBrush').textContent = paint.radius;
+  sMul.value = Math.round(1000 * Math.log(speedMul / MUL_MIN) / Math.log(MUL_RATIO));
+  vMul.textContent = speedMul.toFixed(2) + '×';
+  sSteps.value = tickCount;
+  vSteps.textContent = tickCount;
 }
 function loadState(data) {
   if (!wasm || !data) return;
@@ -1335,7 +1345,8 @@ function loadState(data) {
     if (typeof data.paint.radius === 'number') paint.radius = data.paint.radius;
     if (data.paint.color) document.getElementById('paintColor').value = data.paint.color;
   }
-  if (typeof data.speedIndex === 'number') { speedIdx = Math.max(0, Math.min(SPEEDS.length - 1, data.speedIndex | 0)); speedMul = SPEEDS[speedIdx]; }
+  if (typeof data.speedMul === 'number') speedMul = data.speedMul;
+  if (typeof data.tickCount === 'number') tickCount = Math.max(1, data.tickCount | 0);
   if (typeof data.simTime === 'number') simTime = data.simTime;
   scatterPts.length = 0;
   (data.scatterPts || []).forEach(p => scatterPts.push({ x: +p.x, y: +p.y, r: +p.r, s: +p.s }));
