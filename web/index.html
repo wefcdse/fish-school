@@ -1165,6 +1165,7 @@ function render() {
 /* ---------------- 主循环 ---------------- */
 (function main() {
   let fpsS = 60, updS = 0, submitS = 0, frameS = 0, frameCount = 0, lastT = performance.now();
+  let lastSimT = 0, lastWallT = performance.now();   // 用于计算「实际倍速」
   let hiddenPaused = false;
   document.addEventListener('visibilitychange', () => {   // 后台自动暂停；回来重置计时并恢复
     if (document.hidden) {
@@ -1225,6 +1226,10 @@ function render() {
       const dtms = realDt * speedMul * 1000;
       const mm = Math.floor(simTime / 60), ss = simTime - mm * 60;
       const clock = mm + ':' + (ss < 10 ? '0' : '') + ss.toFixed(1);
+      const nowW = performance.now();
+      const wallDt = (nowW - lastWallT) / 1000;
+      const actualMul = wallDt > 0.001 ? (simTime - lastSimT) / wallDt : 0;
+      lastSimT = simTime; lastWallT = nowW;
       const lens = [];
       for (const b of neighborGrid.values()) lens.push(b.length);
       lens.sort((a, b) => b - a);
@@ -1234,7 +1239,7 @@ function render() {
       diagEl.innerHTML =
         `渲染 <b>${submitS.toFixed(1)}</b> · GPU <b>${gpu}</b> · update <b>${upd}</b> ms · 倍速 <b>×${speedMul}</b> · 步/帧 <b>${tickCount}</b>` +
         `<br>帧 <b>${frameS.toFixed(1)}</b> · 周期 <b>${(1000 / fpsS).toFixed(1)}</b> · fps <b>${Math.round(fpsS)}</b> · 鱼 <b>${fishes.length}</b>` +
-        `<br>逻辑时间 <b>${clock}</b> · tick dt <b>${dtms.toFixed(1)}</b> ms` +
+        `<br>逻辑时间 <b>${clock}</b> · tick dt <b>${dtms.toFixed(1)}</b> ms · 实际倍速 <b>×${actualMul.toFixed(2)}</b>` +
         `<br>格密度 前10/20/50 <b>${avgTop(10).toFixed(1)}</b>/<b>${avgTop(20).toFixed(1)}</b>/<b>${avgTop(50).toFixed(1)}</b> · 均 <b>${avgAll.toFixed(1)}</b> · 格数 <b>${cells}</b>`;
     }
     requestAnimationFrame(frame);

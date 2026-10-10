@@ -1011,6 +1011,7 @@ function render() {
 /* ---------------- 主循环 ---------------- */
 function main() {
   let fpsS = 60, updS = 0, submitS = 0, frameS = 0, frameCount = 0, lastT = performance.now();
+  let lastSimT = 0, lastWallT = performance.now();   // 用于计算「实际倍速」
   let hiddenPaused = false;
   document.addEventListener('visibilitychange', () => {   // 后台自动暂停；回来重置计时并恢复
     if (document.hidden) {
@@ -1071,12 +1072,16 @@ function main() {
       const dtms = realDt * speedMul * 1000;
       const mm = Math.floor(simTime / 60), ss = simTime - mm * 60;
       const clock = mm + ':' + (ss < 10 ? '0' : '') + ss.toFixed(1);
+      const nowW = performance.now();
+      const wallDt = (nowW - lastWallT) / 1000;
+      const actualMul = wallDt > 0.001 ? (simTime - lastSimT) / wallDt : 0;
+      lastSimT = simTime; lastWallT = nowW;
       wasm.sim_compute_stats();
       refreshViews();   // 统计可能触发内存增长，重新建立视图后再读
       diagEl.innerHTML =
         `渲染 <b>${submitS.toFixed(1)}</b> · GPU <b>${gpu}</b> · update <b>${upd}</b> ms · 倍速 <b>×${speedMul}</b> · 步/帧 <b>${tickCount}</b> · <b>${engineName}</b>` +
         `<br>帧 <b>${frameS.toFixed(1)}</b> · 周期 <b>${(1000 / fpsS).toFixed(1)}</b> · fps <b>${Math.round(fpsS)}</b> · 鱼 <b>${fishCount()}</b>` +
-        `<br>逻辑时间 <b>${clock}</b> · tick dt <b>${dtms.toFixed(1)}</b> ms` +
+        `<br>逻辑时间 <b>${clock}</b> · tick dt <b>${dtms.toFixed(1)}</b> ms · 实际倍速 <b>×${actualMul.toFixed(2)}</b>` +
         `<br>格密度 前10/20/50 <b>${statsF32[0].toFixed(1)}</b>/<b>${statsF32[1].toFixed(1)}</b>/<b>${statsF32[2].toFixed(1)}</b> · 均 <b>${statsF32[4].toFixed(1)}</b> · 格数 <b>${statsF32[3].toFixed(0)}</b>`;
     }
     requestAnimationFrame(frame);
