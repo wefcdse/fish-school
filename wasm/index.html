@@ -180,7 +180,7 @@
 
 <div class="hud">
   <div>移动鼠标 → 蓝色力场吸引鱼群，内圈橙色排斥</div>
-  <div><b>中键</b> 放大镜 · <b>左键</b> 按住驱散 · <b>空格</b> 暂停 · <b>R</b> 打乱 · <b>W/S</b> 倍速 · <b>F1</b> 界面</div>
+  <div><b>中键</b> 放大镜 · <b>左键</b> 按住驱散 · <b>空格</b> 暂停 · <b>R</b> 打乱 · <b>W/S</b> 倍速 · <b>A/D</b> 步/帧 · <b>F1</b> 界面</div>
 </div>
 
 <div class="panel paint">
@@ -328,6 +328,7 @@ let uiMode = 0;   // 0 全显示 / 1 只留左上性能 / 2 全隐藏
 const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 3, 5, 8, 16];
 let speedIdx = 3;                 // 指向 1.0×
 let speedMul = SPEEDS[speedIdx];  // 倍速：只缩放传进 tick 的 dt
+let tickCount = 1;                // 每帧执行 update 的次数（A/D 调）
 let simTime = 0;                  // 逻辑(模拟)时间累积（秒）
 
 window.addEventListener('mousemove', e => {
@@ -468,6 +469,10 @@ window.addEventListener('keydown', e => {
   } else if (e.code === 'KeyS') {
     speedIdx = Math.max(speedIdx - 1, 0);
     speedMul = SPEEDS[speedIdx];
+  } else if (e.code === 'KeyD') {
+    tickCount = Math.min(tickCount + 1, 64);   // 每帧步数 +1
+  } else if (e.code === 'KeyA') {
+    tickCount = Math.max(1, tickCount - 1);    // 每帧步数 -1
   }
 });
 
@@ -1032,11 +1037,11 @@ function main() {
 
     let updTotal = 0;
     if (!paused) {
-      // 每帧固定 1 个 tick，dt = 真实流逝时间 × 倍速
+      // 每帧 tickCount 次 update，dt = 真实流逝时间 × 倍速
       const s0 = performance.now();
-      update(realDt * speedMul);
+      for (let t = 0; t < tickCount; t++) update(realDt * speedMul);
       updTotal = performance.now() - s0;
-      simTime += realDt * speedMul;
+      simTime += realDt * speedMul * tickCount;
     }
     updS = updS * 0.9 + updTotal * 0.1;
     refreshViews();
@@ -1072,7 +1077,7 @@ function main() {
       wasm.sim_compute_stats();
       refreshViews();   // 统计可能触发内存增长，重新建立视图后再读
       diagEl.innerHTML =
-        `渲染 <b>${submitS.toFixed(1)}</b> · GPU <b>${gpu}</b> · update <b>${upd}</b> ms · 倍速 <b>×${speedMul}</b> · <b>${engineName}</b>` +
+        `渲染 <b>${submitS.toFixed(1)}</b> · GPU <b>${gpu}</b> · update <b>${upd}</b> ms · 倍速 <b>×${speedMul}</b> · 步/帧 <b>${tickCount}</b> · <b>${engineName}</b>` +
         `<br>帧 <b>${frameS.toFixed(1)}</b> · 周期 <b>${(1000 / fpsS).toFixed(1)}</b> · fps <b>${Math.round(fpsS)}</b> · 鱼 <b>${fishCount()}</b>` +
         `<br>逻辑时间 <b>${clock}</b> · tick dt <b>${dtms.toFixed(1)}</b> ms` +
         `<br>格密度 前10/20/50 <b>${statsF32[0].toFixed(1)}</b>/<b>${statsF32[1].toFixed(1)}</b>/<b>${statsF32[2].toFixed(1)}</b> · 均 <b>${statsF32[4].toFixed(1)}</b> · 格数 <b>${statsF32[3].toFixed(0)}</b>`;
