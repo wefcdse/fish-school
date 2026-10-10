@@ -217,7 +217,7 @@
   <label>画笔大小 <span class="val" id="vBrush"></span>
     <input type="range" id="sBrush" min="10" max="400" step="1" value="80"></label>
   <div class="divider"><span>一键着色</span></div>
-  <button id="btnBlue" class="btn">纯蓝色</button>
+  <button id="btnBlue" class="btn">画笔颜色</button>
   <button id="btnRandDefault" class="btn">默认随机</button>
   <button id="btnRandRich" class="btn">丰富随机</button>
 </div>
@@ -1560,7 +1560,7 @@ applyBrush();
 /* 一键给全部鱼重新着色（默认范围 185~240，丰富为全色域） */
 function recolorAll(kind) {
   for (let i = 0; i < fishes.length; i++) {
-    if (kind === 'blue') fishes[i].hue = 220;
+    if (kind === 'blue') fishes[i].hue = paint.hue;        // 当前画笔颜色
     else if (kind === 'default') fishes[i].hue = 185 + Math.random() * 55;
     else fishes[i].hue = Math.random() * 360;
   }

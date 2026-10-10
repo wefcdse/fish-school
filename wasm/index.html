@@ -217,7 +217,7 @@
   <label>画笔大小 <span class="val" id="vBrush"></span>
     <input type="range" id="sBrush" min="10" max="400" step="1" value="80"></label>
   <div class="divider"><span>一键着色</span></div>
-  <button id="btnBlue" class="btn">纯蓝色</button>
+  <button id="btnBlue" class="btn">画笔颜色</button>
   <button id="btnRandDefault" class="btn">默认随机</button>
   <button id="btnRandRich" class="btn">丰富随机</button>
 </div>
@@ -1428,12 +1428,12 @@ function applyBrush() {
 sBrush.addEventListener('input', applyBrush);
 applyBrush();
 
-/* 一键给全部鱼重新着色（直接写色相缓冲：默认范围 185~240，丰富为全色域） */
+/* 一键给全部鱼重新着色（直接写色相缓冲：画笔色 / 默认范围 185~240 / 全色域） */
 function recolorAll(kind) {
   if (!wasm) return;
   const n = wasm.sim_len();
   for (let i = 0; i < n; i++) {
-    if (kind === 'blue') hues[i] = 220;
+    if (kind === 'blue') hues[i] = paint.hue;                 // 当前画笔颜色
     else if (kind === 'default') hues[i] = 185 + Math.random() * 55;
     else hues[i] = Math.random() * 360;
   }
