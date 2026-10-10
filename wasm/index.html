@@ -1267,6 +1267,7 @@ function saveState() {
     paint: { enabled: paint.enabled, hue: paint.hue, radius: paint.radius, color: document.getElementById('paintColor').value },
     scatterPts: scatterPts.map(p => ({ x: p.x, y: p.y, r: p.r, s: p.s })),
     count: n,
+    rng: wasm.sim_rng() >>> 0,
     fish: {
       x: arr(xs), y: arr(ys), vx: arr(vxs), vy: arr(vys),
       size: arr(sizes), hue: arr(hues), phase: arr(phases), wander: arr(wanders),
@@ -1332,6 +1333,7 @@ function loadState(data) {
     sizes[i] = f.size[i]; hues[i] = f.hue[i]; phases[i] = f.phase[i];
     if (f.wander) wanders[i] = f.wander[i];
   }
+  if (typeof data.rng === 'number') wasm.sim_set_rng(data.rng >>> 0);
   syncUIFromParams();
 }
 document.getElementById('btnSave').addEventListener('click', saveState);
