@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>鱼群模拟 · Boids</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 30px;
+    background: #040a14; color: #cfe6ff;
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  h1 { font-weight: 600; letter-spacing: 6px; color: #9fc8f0; font-size: 22px; text-shadow: 0 0 18px rgba(90,180,255,.4); }
+  h1 small { display: block; text-align: center; font-size: 11px; letter-spacing: 2px; opacity: .5; margin-top: 8px; font-weight: 400; }
+  .cards { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+  a.card {
+    display: block; width: 230px; padding: 20px 22px; text-decoration: none; color: #cfe6ff;
+    background: rgba(10,40,70,.4); border: 1px solid rgba(90,160,240,.25); border-radius: 14px;
+    backdrop-filter: blur(8px); transition: .2s ease;
+  }
+  a.card:hover { background: rgba(30,70,120,.5); border-color: rgba(120,190,255,.55); transform: translateY(-3px); }
+  a.card b { font-size: 15px; letter-spacing: 1px; color: #a9d4ff; }
+  a.card span { display: block; margin-top: 9px; font-size: 12px; line-height: 1.7; color: #7fb4e8; }
+</style>
+</head>
+<body>
+  <h1>鱼群模拟<small>BOIDS FLOCKING · WEBGL</small></h1>
+  <div class="cards">
+    <a class="card" href="wasm/"><b>WASM 版</b><span>Rust 编译 + SIMD 加速，可跑到 5 万条</span></a>
+    <a class="card" href="web/"><b>纯 JS 版</b><span>无需 WASM，纯 JavaScript 实现</span></a>
+  </div>
+</body>
+</html>
