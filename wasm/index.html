@@ -99,6 +99,7 @@
     background: transparent;
   }
   #siteEdit { display: flex; flex-direction: column; gap: 10px; }
+  #polyEdit { display: flex; flex-direction: column; gap: 10px; }
   .panel .btn {
     width: 100%; padding: 6px 8px; cursor: pointer;
     font: inherit; font-size: 12px; color: #cfe6ff;
@@ -199,7 +200,7 @@
   <div id="polyEdit" style="display:none">
     <div class="divider"><span>编辑选中力场</span></div>
     <label>强度 <span class="val" id="vPolyS"></span>
-      <input type="range" id="sPolyS" min="-4" max="4" step="0.05" value="1"></label>
+      <input type="range" id="sPolyS" min="0" max="4" step="0.05" value="1"></label>
     <button id="btnDelPoly" class="btn">删除此力场</button>
   </div>
 </div>
