@@ -451,9 +451,10 @@ window.addEventListener('keydown', e => {
     document.body.classList.toggle('paused', paused);
     e.preventDefault();
   } else if (e.code === 'KeyR') {
-    // 只打乱鱼的位置，保留颜色等其它属性
+    // 打乱位置，并把倍速重置回 1×（W/S 那个）
     const w = bounds.right - bounds.left, h = bounds.bottom - bounds.top;
     for (const f of fishes) { f.x = bounds.left + Math.random() * w; f.y = bounds.top + Math.random() * h; }
+    speedIdx = 3; speedMul = SPEEDS[speedIdx];
   } else if (e.code === 'KeyW') {
     speedIdx = Math.min(speedIdx + 1, SPEEDS.length - 1);
     speedMul = SPEEDS[speedIdx];
