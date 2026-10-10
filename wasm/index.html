@@ -1255,6 +1255,13 @@ function stamp() {
   const d = new Date(), p = x => String(x).padStart(2, '0');
   return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + '-' + p(d.getMinutes()) + '-' + p(d.getSeconds());
 }
+function panelKey(p) { for (const c of p.classList) if (c !== 'panel' && c !== 'pinned') return c; return ''; }
+function collectPanels() {
+  return Array.from(document.querySelectorAll('.panel')).map(p => {
+    const r = p.getBoundingClientRect();
+    return { id: panelKey(p), left: Math.round(r.left), top: Math.round(r.top), pinned: p.classList.contains('pinned'), z: p.style.zIndex || '' };
+  });
+}
 function saveState() {
   if (!wasm) return;
   const n = wasm.sim_len();
@@ -1266,6 +1273,8 @@ function saveState() {
     params: { ...params },
     paint: { enabled: paint.enabled, hue: paint.hue, radius: paint.radius, color: document.getElementById('paintColor').value },
     scatterPts: scatterPts.map(p => ({ x: p.x, y: p.y, r: p.r, s: p.s })),
+
+    panels: collectPanels(),
     count: n,
     rng: wasm.sim_rng() >>> 0,
     fish: {
@@ -1323,6 +1332,14 @@ function loadState(data) {
   scatterPts.length = 0;
   (data.scatterPts || []).forEach(p => scatterPts.push({ x: +p.x, y: +p.y, r: +p.r, s: +p.s }));
   selectedSite = -1; syncSiteEditor();
+  (data.panels || []).forEach(info => {
+    const p = info.id && document.querySelector('.panel.' + info.id);
+    if (!p) return;
+    p.style.right = 'auto'; p.style.left = info.left + 'px'; p.style.top = info.top + 'px';
+    p.classList.toggle('pinned', !!info.pinned);
+    const b = p.querySelector('.pin'); if (b) b.textContent = info.pinned ? '🔒' : '🔓';
+    if (info.z) p.style.zIndex = info.z;
+  });
   const f = data.fish || {};
   const n = (f.x && f.x.length) || data.count || 0;
   params.count = n;
