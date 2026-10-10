@@ -435,6 +435,17 @@ function hitPolyDir(sx, sy) {
   }
   return -1;
 }
+function hitPolyCenter(sx, sy) {
+  for (let i = polyFields.length - 1; i >= 0; i--) {
+    const po = polyFields[i];
+    const n = po.pts.length;
+    let cx = 0, cy = 0;
+    for (let v = 0; v < n; v++) { cx += po.pts[v].x; cy += po.pts[v].y; }
+    const c = w2s(cx / n, cy / n);
+    if (Math.hypot(sx - c.x, sy - c.y) <= 10) return i;
+  }
+  return -1;
+}
 function hitPolyInside(sx, sy) {
   for (let i = polyFields.length - 1; i >= 0; i--) {
     const po = polyFields[i];
@@ -513,6 +524,14 @@ window.addEventListener('mousedown', e => {
       selectedPoly = pv.i; syncPolyEditor();
       const w = screenToWorld(e.clientX, e.clientY);
       dragPoly = { kind: 'v', i: pv.i, v: pv.v, ox: polyFields[pv.i].pts[pv.v].x - w.x, oy: polyFields[pv.i].pts[pv.v].y - w.y };
+      return;
+    }
+    const pc = hitPolyCenter(e.clientX, e.clientY);
+    if (pc >= 0) {                  // 点中质心手柄：选中并开始整体拖动
+      selectedPoly = pc; syncPolyEditor();
+      const w = screenToWorld(e.clientX, e.clientY);
+      const po = polyFields[pc];
+      dragPoly = { kind: 'm', i: pc, wx: w.x, wy: w.y, pts0: po.pts.map(p => ({ x: p.x, y: p.y })), dir0: { x: po.dir.x, y: po.dir.y } };
       return;
     }
     const pd = hitPolyDir(e.clientX, e.clientY);
@@ -1094,6 +1113,16 @@ function drawPolyOverlay() {
     polyctx.arc(d.x, d.y, 7, 0, 2 * Math.PI);
     polyctx.strokeStyle = 'rgba(255,184,77,0.5)';
     polyctx.stroke();
+    // 质心（中心）手柄：拖动可整体移动多边形
+    polyctx.beginPath();
+    polyctx.arc(cx, cy, 6, 0, 2 * Math.PI);
+    polyctx.strokeStyle = sel ? '#ffffff' : 'rgba(142,230,255,0.9)';
+    polyctx.lineWidth = sel ? 2 : 1.5;
+    polyctx.stroke();
+    polyctx.beginPath();
+    polyctx.arc(cx, cy, 2.5, 0, 2 * Math.PI);
+    polyctx.fillStyle = sel ? '#ffffff' : '#8ee6ff';
+    polyctx.fill();
     // 顶点
     for (const p of scr) {
       polyctx.beginPath();
