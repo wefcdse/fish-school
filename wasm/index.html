@@ -181,6 +181,9 @@
   <button id="btnSave" class="btn">保存（下载 JSON）</button>
   <button id="btnLoad" class="btn">恢复（载入 JSON）</button>
   <input type="file" id="loadFile" accept="application/json,.json" style="display:none">
+  <select id="presetSel" style="width:100%; color:#cfe6ff; background:rgba(20,50,90,.5); border:1px solid rgba(90,160,240,.3); border-radius:6px; padding:5px 6px; font:inherit; font-size:12px;">
+    <option value="">从预设加载…</option>
+  </select>
 </div>
 
 <div class="panel p-speed">
@@ -1677,6 +1680,32 @@ loadFileEl.addEventListener('change', () => {
     reader.readAsText(file);
   }
 });
+/* 预设：从 presets/index.json 读取清单，选中后 fetch 对应 JSON 应用（无需保存） */
+const presetSel = document.getElementById('presetSel');
+async function loadPresets() {
+  try {
+    const r = await fetch('../presets/index.json', { cache: 'no-store' });
+    const list = (await r.json()).presets || [];
+    for (const name of list) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name.replace(/\.json$/, '');
+      presetSel.appendChild(opt);
+    }
+  } catch (e) { /* 没有预设或 file:// 受限时静默 */ }
+}
+presetSel.addEventListener('change', async () => {
+  const name = presetSel.value;
+  if (!name) return;
+  try {
+    const r = await fetch('../presets/' + name, { cache: 'no-store' });
+    const data = await r.json();
+    if (data.name) presetSel.options[presetSel.selectedIndex].textContent = data.name;
+    loadState(data);
+  } catch (e) { alert('预设载入失败：' + e.message); }
+  presetSel.value = '';
+});
+loadPresets();
 
 })();
 </script>

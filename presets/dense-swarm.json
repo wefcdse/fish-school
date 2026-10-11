@@ -1,0 +1,25 @@
+{
+  "name": "密集鱼群",
+  "params": {
+    "count": 1200,
+    "cohesion": 0.75,
+    "separation": 1.1,
+    "align": 1.3,
+    "speed": 2.0,
+    "wander": 0.6,
+    "mAttract": 0.5,
+    "mRepel": 0.8,
+    "mRadius": 320,
+    "scatterForce": 1.5,
+    "scatterRadius": 260,
+    "mouseField": false,
+    "zoom": 1,
+    "wrap": true
+  },
+  "paint": { "enabled": false, "hue": 220, "radius": 80, "color": "#4da3ff" },
+  "scatterPts": [],
+  "polyFields": [],
+  "count": 1200,
+  "speedMul": 1,
+  "tickCount": 1
+}

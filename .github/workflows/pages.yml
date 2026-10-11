@@ -25,12 +25,13 @@ jobs:
 
       - name: Stage site
         run: |
-          mkdir -p _site/wasm _site/web
+          mkdir -p _site/wasm _site/web _site/presets
           cp index.html _site/
           cp .nojekyll _site/
           cp wasm/index.html _site/wasm/
           cp wasm/sim_wasm.js _site/wasm/
           cp web/index.html _site/web/
+          cp presets/*.json _site/presets/
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
