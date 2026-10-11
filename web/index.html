@@ -614,10 +614,11 @@ window.addEventListener('keydown', e => {
 
 // 界面控件不捕获键盘焦点：Tab 跳过，鼠标/触摸交互结束后立即失焦，让画布快捷键始终生效
 const UI_CONTROL = '.panel input, .panel select, .panel button, .panel textarea';
-document.querySelectorAll(UI_CONTROL).forEach(el => { el.tabIndex = -1; });
+document.querySelectorAll('.panel input, .panel button, .panel textarea').forEach(el => { el.tabIndex = -1; });
 window.addEventListener('pointerup', () => {
+  // 只对连续交互控件失焦；select 是原生一次性交互，blur 会关闭正在打开的下拉，须排除
   const a = document.activeElement;
-  if (a && a.matches && a.matches(UI_CONTROL)) a.blur();
+  if (a && a.matches && a.matches('.panel input, .panel button, .panel textarea')) a.blur();
 });
 
 /* ---------------- 模拟 ---------------- */
